@@ -161,9 +161,9 @@ const SITE = {
   // A board that passes unlocks it.
   await p.route("**/esptool.js", (r) =>
     r.fulfill({ contentType: "text/javascript",
-                body: espStub({ chip: "ESP32-S3", flashSize: "8MB",
+                body: espStub({ chip: "ESP32-S3", flashSize: "16MB",
                                 description: "ESP32-S3 (QFN56) (revision v0.2)" }).toString() }));
-  await fakeSerial(p, { usbVendorId: 0x10c4, usbProductId: 0xea60 });
+  await fakeSerial(p, { usbVendorId: 0x303a, usbProductId: 0x1001 });
   await p.click("#checkbtn");
   await p.waitForTimeout(400);
   g = await gateState();
@@ -195,19 +195,26 @@ const SITE = {
   // Cypher32 over the wrong device.
   console.log("board verdict");
   const V = (o) => p.evaluate((i) => window.boardVerdict(i), o);
-  const CP = { vendorId: 0x10c4, productId: 0xea60 };
+  // The T-Deck has no bridge chip: it is always the S3's own USB.
+  const CP = { vendorId: 0x303a, productId: 0x1001 };
 
-  let v = await V({ chip: "ESP32-S3", flashSize: "8MB", ...CP });
-  ck(v.level === "ok", "an ESP32-S3 with 8 MB on a CP210x passes");
+  let v = await V({ chip: "ESP32-S3", flashSize: "16MB", ...CP });
+  ck(v.level === "ok", "an ESP32-S3 with 16 MB on native USB passes");
   ck(/consistent with/i.test(v.headline), "and is described as consistent, not confirmed");
-  ck(/WiFi LoRa 32 V3|would look identical/i.test(v.detail),
+  ck(/T-Deck/.test(v.headline), "as a T-Deck");
+  ck(/would look identical/i.test(v.detail),
      "and says plainly what it cannot distinguish");
 
   // The one the installer itself would NOT catch: right family, wrong size.
   v = await V({ chip: "ESP32-S3", flashSize: "4MB", ...CP });
   ck(v.level === "fail", "an ESP32-S3 with only 4 MB of flash is refused");
-  ck(/4MB/.test(v.headline) && /8 MB/.test(v.headline),
+  ck(/4MB/.test(v.headline) && /16 MB/.test(v.headline),
      "naming both what it found and what is needed");
+
+  // A Heltec Wireless Paper is the likeliest wrong board on someone's desk.
+  v = await V({ chip: "ESP32-S3", flashSize: "8MB", vendorId: 0x10c4, productId: 0xea60 });
+  ck(v.level === "fail", "an 8 MB ESP32-S3 (a Wireless Paper) is refused");
+  ck(/Wireless Paper/.test(v.detail), "and pointed at the right firmware");
 
   v = await V({ chip: "ESP32-C3", flashSize: "8MB", ...CP });
   ck(v.level === "fail", "a different chip family is refused");
@@ -215,27 +222,27 @@ const SITE = {
   ck(/nothing has been written/i.test(v.detail),
      "and reassuring that the check wrote nothing");
 
-  v = await V({ chip: "ESP32", flashSize: "8MB", ...CP });
+  v = await V({ chip: "ESP32", flashSize: "16MB", ...CP });
   ck(v.level === "fail", "a plain ESP32 is refused, not matched as a prefix");
 
-  v = await V({ chip: "", flashSize: "8MB", ...CP });
+  v = await V({ chip: "", flashSize: "16MB", ...CP });
   ck(v.level === "fail", "a board that will not say what it is, is refused");
 
   // Corroboration, never a veto in either direction.
-  v = await V({ chip: "ESP32-S3", flashSize: "8MB", vendorId: 0x303a, productId: 0x1001 });
-  ck(v.level === "warn", "native USB rather than a CP210x lowers confidence");
+  v = await V({ chip: "ESP32-S3", flashSize: "16MB", vendorId: 0x10c4, productId: 0xea60 });
+  ck(v.level === "warn", "a CP210x bridge rather than native USB lowers confidence");
   ck(!/fail/.test(v.level), "but does not refuse \u2014 the chip is still right");
-  v = await V({ chip: "ESP32-S3", flashSize: "8MB", vendorId: 0x1a86, productId: 0x7523 });
+  v = await V({ chip: "ESP32-S3", flashSize: "16MB", vendorId: 0x1a86, productId: 0x7523 });
   ck(v.level === "warn", "an unfamiliar bridge lowers confidence");
   ck(/0x1a86/.test(v.notes.join(" ")), "and reports which one it saw");
-  v = await V({ chip: "ESP32-C3", flashSize: "8MB", ...CP });
-  ck(v.level === "fail", "and the right bridge cannot rescue the wrong chip");
+  v = await V({ chip: "ESP32-C3", flashSize: "16MB", ...CP });
+  ck(v.level === "fail", "and the right USB cannot rescue the wrong chip");
 
   v = await V({ chip: "ESP32-S3", flashSize: null, ...CP });
   ck(v.level === "warn", "an unreadable flash size is a warning, not a pass");
   ck(/could not be read/i.test(v.notes.join(" ")), "and says so");
 
-  ck((await V({ chip: "esp32-s3", flashSize: "8mb", ...CP })).level === "ok",
+  ck((await V({ chip: "esp32-s3", flashSize: "16mb", ...CP })).level === "ok",
      "the comparison is case-insensitive");
 
   // A bad board must NOT unlock it.
@@ -245,7 +252,7 @@ const SITE = {
     r.fulfill({ contentType: "text/javascript",
                 body: espStub({ chip: "ESP32-C3", flashSize: "4MB" }).toString() }));
   await q2.goto(`http://127.0.0.1:${PORT}/`);
-  await fakeSerial(q2, { usbVendorId: 0x10c4, usbProductId: 0xea60 });
+  await fakeSerial(q2, { usbVendorId: 0x303a, usbProductId: 0x1001 });
   await q2.click("#checkbtn");
   await q2.waitForTimeout(400);
   ck(await q2.isHidden("#installwrap"),

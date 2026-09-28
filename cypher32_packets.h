@@ -254,11 +254,21 @@ static_assert(toaMs(64, 7) == 119, "SF7 max frame should be ~118 ms");
 static_assert(toaMs(64, 9) == 391, "SF9 max frame should be ~390 ms");
 static_assert(toaMs(64, 12) == 2794, "SF12 max frame should be ~2793 ms");
 
-// ── SX1262 pin mapping (from Wireless Paper schematic) ─
+// ── SX1262 pin mapping ───────────────────────
+#if defined(CYPHER32_TDECK)
+// LilyGo T-Deck (from LilyGo's utilities.h). The radio shares one SPI bus with
+// the TFT and the SD card — see tdeck_hw.h for how that bus is brought up.
+#define LORA_NSS    9  // GPIO9  = SPI chip select
+#define LORA_DIO1  45  // GPIO45 = interrupt
+#define LORA_RST   17  // GPIO17 = reset
+#define LORA_BUSY  13  // GPIO13 = busy
+#else
+// Heltec Wireless Paper schematic
 #define LORA_NSS   8   // GPIO8  = SPI chip select
 #define LORA_DIO1  14  // GPIO14 = interrupt / busy indicator
 #define LORA_RST   12  // GPIO12 = reset
 #define LORA_BUSY  13  // GPIO13 = busy
+#endif
 
 // ── Packet structs ───────────────────────────
 

@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Flash Cypher32</title>
-<meta name="description" content="Install Cypher32 onto a Heltec Wireless Paper straight from your browser.">
+<title>Flash Cypher32 T-Deck</title>
+<meta name="description" content="Install Cypher32 onto a LilyGo T-Deck straight from your browser.">
 <style>
   :root { color-scheme: dark; }
   *{box-sizing:border-box}
@@ -54,10 +54,11 @@
 <body>
 <div class="wrap">
 
-  <h1>Cypher32</h1>
-  <p class="lede">Install the firmware onto a Heltec Wireless Paper straight
-  from this page. No toolchain, no command line — plug the board in over USB
-  and press the button.</p>
+  <h1>Cypher32 &middot; T-Deck</h1>
+  <p class="lede">Install the firmware onto a LilyGo T-Deck straight from this
+  page. No toolchain, no command line — plug the T-Deck in over USB-C, switch it
+  on and press the button. It plays against every other Cypher32 device on the
+  same range profile, Heltec Wireless Papers included.</p>
 
   <!-- Shown only when Web Serial is missing. The button below renders its own
        "not supported" state, but it is small and easy to miss, and the single
@@ -70,7 +71,7 @@
     Chrome on Android and iOS.</p>
     <p class="xs mut">Open this page on a laptop or desktop in Chrome or Edge,
     or flash from the command line with PlatformIO — see the
-    <a href="https://github.com/StevenSeagalStreams/Cypher32#building-and-testing">README</a>.</p>
+    <a href="https://github.com/StevenSeagalStreams/T_Deck_Cypher32#building-and-testing">README</a>.</p>
   </div>
 
   <div class="card">
@@ -103,6 +104,12 @@
     </label>
 
     <div class="warn xs">
+      <b>Your T-Deck must be the 868&nbsp;MHz version.</b> LilyGo sells it
+      with a 433, 868 or 915&nbsp;MHz radio and antenna; the other two cannot
+      tune to these frequencies properly.
+    </div>
+
+    <div class="warn xs">
       <b>869.525&nbsp;MHz and 22&nbsp;dBm are legal in the EU</b> (the ETSI g3
       sub-band). If you are elsewhere, check your local rules before using LONG
       or EPIC — and build FAST from source on a frequency your region allows.
@@ -126,11 +133,13 @@
     <div id="checkresult" hidden style="margin-top:12px"></div>
 
     <p class="xs mut" style="margin-top:11px">Your browser asks which serial
-    port to use. The board appears as a <code>CP210x</code> or
-    <code>USB Serial</code> device. If nothing is listed, install the
-    <a href="https://www.silabs.com/developer-tools/usb-to-uart-bridge-vcp-drivers">CP210x
-    driver</a> and reconnect. You will be asked to pick the port twice &mdash;
-    once here, once to install &mdash; so choose the same one both times.</p>
+    port to use. The T-Deck appears as <code>USB JTAG/serial debug unit</code>
+    or <code>ESP32-S3</code> &mdash; it has no separate USB chip, so no driver
+    is needed. You will be asked to pick the port twice &mdash; once here, once
+    to install &mdash; so choose the same one both times.</p>
+    <p class="xs mut">If no port is listed, or the check cannot connect, put the
+    T-Deck into download mode by hand: switch it off, <b>hold the trackball
+    pressed down</b>, switch it on, then let go.</p>
   </div>
 
   <div class="card" id="installcard">
@@ -154,7 +163,7 @@
         loaded from the network. An ad blocker, a corporate proxy or an offline
         machine will all do this. Reload with the blocker off, or download the
         <code>.bin</code> from the
-        <a href="https://github.com/StevenSeagalStreams/Cypher32/actions">build
+        <a href="https://github.com/StevenSeagalStreams/T_Deck_Cypher32/actions">build
         artifacts</a> and flash it with esptool.</p>
     </div>
   </div>
@@ -162,12 +171,15 @@
   <div class="card">
     <h2>4 &middot; First boot</h2>
     <ol class="xs">
-      <li>The screen shows a QR code and a Wi-Fi name like
+      <li>Switch the T-Deck off and on again (if you used download mode).
+          The screen shows a QR code and a Wi-Fi name like
           <code>C32_XXXX</code>.</li>
       <li>Scan it, or join that open network by hand.</li>
       <li>Your phone opens the portal automatically. If it does not, visit
           <code>192.168.4.1</code>.</li>
       <li>Pick a faction and a password. That device is now yours.</li>
+      <li>On the T-Deck itself: roll the trackball to change page, press
+          <code>M</code> to message someone in range.</li>
     </ol>
   </div>
 
@@ -185,7 +197,7 @@
   </div>
 
   <footer class="xs mut">
-    <a href="https://github.com/StevenSeagalStreams/Cypher32">Source and
+    <a href="https://github.com/StevenSeagalStreams/T_Deck_Cypher32">Source and
     documentation on GitHub</a>
   </footer>
 </div>
@@ -201,20 +213,23 @@
   //
   // What this CAN establish: the chip family and the flash size. Both matter.
   // The family is what makes the image executable at all, and the flash size
-  // is what makes it fit — Cypher32 is built against an 8 MB partition table,
-  // so a 4 MB ESP32-S3 would accept the image and then behave badly. That
+  // is what makes it fit — this build uses the T-Deck's 16 MB partition table,
+  // so an 8 MB ESP32-S3 would accept the image and then behave badly. That
   // second one is worth having, because the installer itself only checks the
   // family and would flash a 4 MB board without complaint.
   //
-  // What this CANNOT establish: that the board is specifically a Wireless
-  // Paper. A Heltec WiFi LoRa 32 V3 is also an ESP32-S3 with 8 MB and would
-  // pass every check here. Nothing reachable over the serial bootloader
-  // distinguishes them — there is no board ID to read, and the MAC belongs to
-  // Espressif rather than to Heltec. So the wording below says "consistent
-  // with", never "confirmed", and the USB bridge is reported as corroboration
-  // rather than as proof.
-  var CP210X = { vendorId: 0x10c4, productId: 0xea60 };  // the Heltec bridge
+  // What this CANNOT establish: that the board is specifically a T-Deck. A
+  // T-Deck Plus, or any ESP32-S3 dev board with 16 MB, would pass every check
+  // here. Nothing reachable over the serial bootloader distinguishes them —
+  // there is no board ID to read, and the MAC belongs to Espressif rather than
+  // to LilyGo. So the wording below says "consistent with", never "confirmed",
+  // and the USB connection is reported as corroboration rather than as proof.
+  //
+  // The T-Deck has no USB-serial bridge: it always appears through the S3's
+  // own USB. A CP210x or CH340 in front of the chip means a different board.
+  var CP210X = { vendorId: 0x10c4, productId: 0xea60 };  // e.g. a Heltec board
   var ESPRESSIF_VID = 0x303a;                            // native USB on an S3
+  var NEED_FLASH = "16MB";
 
   function boardVerdict(info) {
     var notes = [];
@@ -227,20 +242,22 @@
     }
     if (chip.indexOf("ESP32-S3") === -1) {
       return { level: "fail", headline: "This is not an ESP32-S3",
-        detail: "It reports \u201c" + info.chip + "\u201d. A Heltec Wireless " +
-                "Paper is an ESP32-S3, and Cypher32 will not run on anything " +
+        detail: "It reports \u201c" + info.chip + "\u201d. A LilyGo T-Deck " +
+                "is an ESP32-S3, and this firmware will not run on anything " +
                 "else. Nothing has been written.", notes: notes };
     }
 
     var flash = String(info.flashSize || "").toUpperCase().replace(/\s+/g, "");
     if (!flash) {
       notes.push("Flash size could not be read, so it has not been checked.");
-    } else if (flash !== "8MB") {
+    } else if (flash !== NEED_FLASH) {
       return { level: "fail",
-        headline: "This board has " + info.flashSize + " of flash, not 8 MB",
-        detail: "Cypher32 is built against an 8 MB partition layout. This " +
-                "image would be written without complaint and then misbehave, " +
-                "which is exactly the mistake this check exists to catch.",
+        headline: "This board has " + info.flashSize + " of flash, not 16 MB",
+        detail: "This firmware is built against the T-Deck's 16 MB partition " +
+                "layout. The image would be written without complaint and then " +
+                "misbehave, which is exactly the mistake this check exists to " +
+                "catch. (A Heltec Wireless Paper has 8 MB \u2014 it needs the " +
+                "original Cypher32 flasher.)",
         notes: notes };
     }
 
@@ -248,29 +265,28 @@
     // USB chip is in front of the ESP32, and plenty of unrelated boards use
     // the same one. It can lower confidence, not raise or veto it.
     var level = flash ? "ok" : "warn";
-    if (info.vendorId === CP210X.vendorId && info.productId === CP210X.productId) {
-      notes.push("Connected through a CP210x bridge, which is what the " +
-                 "Wireless Paper uses.");
-    } else if (info.vendorId === ESPRESSIF_VID) {
+    if (info.vendorId === ESPRESSIF_VID) {
+      notes.push("Connected through the ESP32-S3\u2019s own USB, which is how " +
+                 "a T-Deck appears.");
+    } else if (info.vendorId === CP210X.vendorId && info.productId === CP210X.productId) {
       level = "warn";
-      notes.push("Connected through the ESP32\u2019s own USB rather than a " +
-                 "CP210x bridge. Fine in itself, but not how a Wireless Paper " +
-                 "normally appears \u2014 worth a second look at which board " +
-                 "this is.");
+      notes.push("Connected through a CP210x bridge. The T-Deck has no bridge " +
+                 "chip \u2014 this looks like a different board (a Heltec " +
+                 "Wireless Paper, perhaps). Worth a second look.");
     } else if (info.vendorId != null) {
       level = "warn";
       notes.push("Connected through an unfamiliar USB bridge (" +
                  hex4(info.vendorId) + ":" + hex4(info.productId) + "). A " +
-                 "Wireless Paper normally appears as a CP210x.");
+                 "T-Deck appears through the ESP32-S3\u2019s own USB.");
     }
 
     return { level: level,
       headline: "ESP32-S3" + (flash ? " with " + flash : "") +
-                " \u2014 consistent with a Heltec Wireless Paper",
+                " \u2014 consistent with a LilyGo T-Deck",
       detail: "This is the right chip and the right flash size. It cannot " +
-              "prove the board is a Wireless Paper specifically: another " +
-              "ESP32-S3 with 8 MB, such as a Heltec WiFi LoRa 32 V3, would " +
-              "look identical from here.", notes: notes };
+              "prove the board is a T-Deck specifically: any other ESP32-S3 " +
+              "with 16 MB, such as a DevKitC, would look identical from " +
+              "here.", notes: notes };
   }
   function hex4(n) {
     return n == null ? "?" : "0x" + n.toString(16).padStart(4, "0");

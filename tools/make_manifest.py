@@ -83,7 +83,7 @@ def main() -> int:
         # The image is merged, so every part offset is already baked into it
         # and the whole thing is written at zero.
         manifest = {
-            "name": "Cypher32 (%s)" % profile.upper(),
+            "name": "Cypher32 T-Deck (%s)" % profile.upper(),
             "version": args.version,
             "new_install_prompt_erase": True,
             "builds": [{
@@ -122,10 +122,10 @@ def main() -> int:
             print("site/%s missing or empty" % name, file=sys.stderr)
             return 1
 
-    # The app partition from default_8MB.csv. Worth stating as a percentage:
-    # a build creeping towards the partition size is the kind of thing nobody
-    # notices until an image silently stops fitting.
-    APP_PARTITION = 0x330000
+    # The app partition from default_16MB.csv (the T-Deck layout). Worth
+    # stating as a percentage: a build creeping towards the partition size is
+    # the kind of thing nobody notices until an image silently stops fitting.
+    APP_PARTITION = 0x640000
 
     table = ["| profile | image | application | of %.2f MB app partition |"
              % (APP_PARTITION / 1048576.0),

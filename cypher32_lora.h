@@ -31,9 +31,15 @@
 //  startReceive() / startTransmit(), so a single handler is correct here.
 // ─────────────────────────────────────────────
 
+#if defined(CYPHER32_TDECK)
+#define LORA_MOSI  41   // T-Deck shared SPI bus (TFT + SD + radio)
+#define LORA_MISO  38
+#define LORA_SCK   40
+#else
 #define LORA_MOSI  10
 #define LORA_MISO  11
 #define LORA_SCK    9
+#endif
 
 // ── Tunables ─────────────────────────────────
 #define LORA_DEBUG          1      // 1 = serial trace of every TX/RX (T0.1)
@@ -1416,7 +1422,15 @@ static bool armRx() {
 bool loraSetup() {
   loraSPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_NSS);
   pinMode(LORA_DIO1, INPUT);
+#if defined(CYPHER32_TDECK)
+  // The T-Deck's SX1262 module runs its TCXO from DIO3 at 1.8 V (LilyGo's and
+  // Meshtastic's configuration for this board); RadioLib's default is 1.6 V.
+  // This is the crystal's supply, not anything on air — it does not change
+  // what other devices hear.
+  int state = radio.begin(LORA_FREQ, LORA_BW, LORA_SF, LORA_CR, LORA_SYNC, LORA_PWR, LORA_PREAMBLE, 1.8f);
+#else
   int state = radio.begin(LORA_FREQ, LORA_BW, LORA_SF, LORA_CR, LORA_SYNC, LORA_PWR, LORA_PREAMBLE);
+#endif
   if (state != RADIOLIB_ERR_NONE) {
     loraInitError = state; loraStatus = "Err:" + String(state);
     loraReady = false; radioState = RS_DOWN;

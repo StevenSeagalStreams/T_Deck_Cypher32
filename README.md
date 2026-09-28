@@ -1,4 +1,4 @@
-# Cypher32
+# Cypher32 · T-Deck
 
 You are a ghost in the machine.
 
@@ -6,13 +6,17 @@ Cypher32 is a **physical hacking game** played on hardware you carry. Each devic
 
 No apps. No accounts. No names transmitted. Just chip IDs, stats, and outcomes.
 
-The game runs on a **Heltec Wireless Paper V1.2** — an ESP32-S3 with a 250×122 e-ink display and a long-range SX1262 radio crammed onto a board the size of a credit card. Everything is controlled through a minimal web portal your device serves over its own Wi-Fi signal.
-
-Your character is always watching you from the display. Its mood changes with your performance.
+This is the **LilyGo T-Deck** edition of
+[Cypher32](https://github.com/StevenSeagalStreams/Cypher32). Same game, same
+rules, same web portal, and **the same radio protocol, byte for byte** — a
+T-Deck finds, scouts, hacks and messages Heltec Wireless Papers exactly as they
+do each other. What the T-Deck adds is a colour screen, a keyboard and a
+trackball: page through your screens with a roll of the ball, and send messages
+straight from the keyboard without getting your phone out.
 
 <table>
 <tr>
-<td width="55%"><img src="docs/img/eink-idle.png" alt="The e-ink display: name, faction, level, battery, the hooded character, XP and skill bars"></td>
+<td width="55%"><img src="docs/img/tdeck/tdeck-idle.png" alt="The T-Deck screen: name, faction, level, battery, the hooded character, XP and skill bars, and a status strip showing the radio profile, nodes in range and the Wi-Fi name"></td>
 <td width="45%"><img src="docs/img/portal-radar.png" alt="The Radar tab: one backdoored node, one half-scouted, one on cooldown, one unidentified"></td>
 </tr>
 <tr>
@@ -22,15 +26,63 @@ Your character is always watching you from the display. Its mood changes with yo
 </table>
 
 > Every image in this README is generated from the source, not mocked up. The
-> e-ink screens are rendered by running the sketch's own drawing code into a
-> framebuffer; the portal screenshots load the same HTML the ESP32 serves.
+> screens are rendered by running the sketch's own drawing code into a
+> framebuffer, then (for the T-Deck shots) through the same scaler the TFT
+> uses; the portal screenshots load the same HTML the ESP32 serves.
 > `cd test && make shots` rebuilds them all.
+
+## Playing against other Cypher32 devices
+
+Everything that decides whether two devices can hear each other is shared with
+upstream Cypher32 and has not been changed: frequency, spreading factor,
+bandwidth, coding rate, sync word, packet formats and the frame-signing key.
+The only radio change is which GPIO pins the SX1262 sits on.
+
+The one rule is the same as ever: **every device in a game must run the same
+range profile** (FAST, LONG or EPIC). A T-Deck on LONG plays with a Wireless
+Paper on LONG; a T-Deck on LONG cannot hear a Wireless Paper on FAST. LONG is
+the default on both.
+
+## T-Deck controls
+
+| Input | What it does |
+|-------|--------------|
+| Roll the trackball | Previous / next page (avatar → last message → faction census) |
+| Press the trackball, or <kbd>Space</kbd> | Next page — the Wireless Paper's PRG press |
+| <kbd>M</kbd> | Write a message to someone in range (see below) |
+| <kbd>Q</kbd> | Put the Wi-Fi join QR on screen for a minute |
+| <kbd>B</kbd> | Send a beacon now |
+| <kbd>T</kbd> | Cycle the colour theme — phosphor, amber, paper, ice (remembered) |
+| <kbd>W</kbd> <kbd>W</kbd> <kbd>W</kbd>, then hold the trackball 5 s | Factory reset |
+
+**Messaging from the keyboard.** <kbd>M</kbd> opens the composer in the strip
+under the game screen. Roll the trackball to pick who, type up to 32 characters,
+then <kbd>Enter</kbd> or a trackball press sends it. <kbd>Backspace</kbd> on an
+empty line closes the composer. It does exactly what the portal's message
+button does — same packet, same log entry, same "last sent" on page 2.
+
+<table>
+<tr>
+<td><img src="docs/img/tdeck/tdeck-compose.png" alt="The composer: MSG TO NULLBYTE 2/3, the message being typed in large type, and a 22/32 character count"></td>
+<td><img src="docs/img/tdeck/tdeck-lastmsg.png" alt="Page 2 in the amber theme: the last message received and the last message sent"></td>
+</tr>
+<tr>
+<td align="center"><sub>Composer: roll to choose, type, Enter.</sub></td>
+<td align="center"><sub>Page 2, amber theme.</sub></td>
+</tr>
+</table>
+
+Recon, hacking and skill points are still played in the **web portal** on your
+phone, exactly as on the Wireless Paper — the recon mini-game is a
+touch-and-timing game that belongs on a phone screen.
 
 ---
 
 ## Contents
 
-- [Hardware](#hardware) — what you need to buy
+- [Playing against other Cypher32 devices](#playing-against-other-cypher32-devices)
+- [T-Deck controls](#t-deck-controls) — trackball, keyboard, messaging
+- [Hardware](#hardware) — what you need to buy, and how the port works
 - [First-time setup](#first-time-setup) — flash, power, join, play
 - [Web portal](#web-portal) — the command interface
 - [Factions](#factions) · [Skills](#skills) · [Levelling](#levelling)
@@ -45,11 +97,45 @@ Your character is always watching you from the display. Its mood changes with yo
 
 | Component | Detail |
 |-----------|--------|
-| Board | Heltec Wireless Paper V1.2 |
-| MCU | ESP32-S3 |
-| Display | 250 × 122 px e-ink (landscape) |
+| Board | **LilyGo T-Deck**, **868 MHz** version |
+| MCU | ESP32-S3 (16 MB flash, 8 MB PSRAM) |
+| Display | 320 × 240 IPS TFT (ST7789) |
+| Input | Keyboard, trackball |
 | Radio | SX1262 — 868 MHz EU ISM |
-| Battery | LiPo via onboard charger |
+| Battery | LiPo via onboard charger (JST connector; the T-Deck ships without one) |
+
+LilyGo sells the T-Deck with a 433, 868 or 915 MHz radio and antenna. Buy the
+**868 MHz** one: the game runs at 868.1 / 869.525 MHz, and the others are
+neither tuned for it nor fitted with the right antenna. The T-Deck Plus is the
+same board with a GPS added and should work too, but has not been tested.
+
+**Fit the antenna before you switch it on.** Transmitting into an empty
+connector can damage the radio.
+
+### How the port works
+
+The game was written for a 250 × 122 e-ink panel, and every screen is laid out
+in those pixels. Rather than redraw forty screens, the T-Deck build keeps them
+exactly as they are: the sketch draws into a 250 × 122 one-bit canvas as it
+always has, and `tdeck_hw.h` scales it 1.28× onto the top 320 × 156 of the TFT
+— anti-aliased and tinted by the colour theme. The 84 px strip underneath is
+the T-Deck's own: radio status, the Wi-Fi name, key hints, and the message
+composer. Screens that carry the join QR are always drawn dark-on-light, since
+phone cameras will not read an inverted code; the test suite scans it in every
+theme.
+
+Unlike e-ink, a TFT redraw takes about 20 ms instead of two seconds, so the
+radio is never deaf while the screen changes.
+
+| File | What it is |
+|------|------------|
+| `tdeck_hw.h` | Pin map, power and shared-SPI bring-up, the scaled display |
+| `tdeck_ui.h` | Keyboard, trackball, status strip, message composer |
+| everything else | Cypher32, with `#if defined(CYPHER32_TDECK)` at the few points where the boards differ (pins, power rail, battery sense, display type) |
+
+The build is selected by `-DCYPHER32_TDECK`, which `platformio.ini` sets for the
+default environments. Without it the same tree still builds the original
+Heltec Wireless Paper firmware (`pio run -e heltec_long`).
 
 ---
 
@@ -60,8 +146,15 @@ Flash it. Power it. Pick a side. That's all it takes to enter the network.
 ### Step 1 — Flash the firmware
 
 **From your browser — no toolchain.** Open
-**[the installer page](https://stevenseagalstreams.github.io/Cypher32/)**, plug
-the board in over USB, pick a range profile and press one button.
+**[the installer page](https://stevenseagalstreams.github.io/T_Deck_Cypher32/)**,
+plug the T-Deck in over USB-C, switch it on, pick a range profile and press one
+button. (The page is published by CI once GitHub Pages is switched on for this
+repository with its source set to *GitHub Actions*. Until then, download the
+`.bin` from the latest [build artifacts](https://github.com/StevenSeagalStreams/T_Deck_Cypher32/actions).)
+
+If the browser cannot connect, put the T-Deck into download mode by hand:
+switch it off, hold the trackball pressed down, switch it on, let go. Switch it
+off and on again once flashing has finished.
 
 That needs the Web Serial API, which today means **Chrome, Edge or Opera on a
 desktop computer**. Firefox and Safari do not implement it, and neither does
@@ -74,15 +167,15 @@ flashed by that step. It confirms the chip family and the flash size, and the
 install button stays locked until it passes.
 
 Both of those matter. The family is what makes the image runnable at all; the
-flash size is what makes it fit, because Cypher32 is built against an 8 MB
-partition table and a 4 MB ESP32-S3 would accept the image and then misbehave.
-The installer itself only checks the family, so the size check is the one that
-catches that mistake.
+flash size is what makes it fit, because this build uses the T-Deck's 16 MB
+partition table and a smaller ESP32-S3 — a Heltec Wireless Paper, say — would
+accept the image and then misbehave. The installer itself only checks the
+family, so the size check is the one that catches that mistake.
 
-What it *cannot* do is prove the board is specifically a Wireless Paper — a
-Heltec WiFi LoRa 32 V3 is also an ESP32-S3 with 8 MB and looks identical over
-the bootloader. The page says "consistent with" rather than "confirmed", and
-reports the USB bridge as corroboration rather than proof. If the check cannot
+What it *cannot* do is prove the board is specifically a T-Deck — any ESP32-S3
+with 16 MB looks identical over the bootloader. The page says "consistent with"
+rather than "confirmed", and reports the USB connection as corroboration rather
+than proof. If the check cannot
 run at all — an unreachable library, a port held by a serial monitor — it says
 so and lets you install anyway, because a check that fails is not evidence
 about your board.
@@ -95,21 +188,26 @@ private one, change the key and build it yourself.
 <details>
 <summary><b>Or build it yourself</b></summary>
 
-**Arduino IDE:**
-1. Install the **Heltec ESP32** board package via Boards Manager.
-2. Install these libraries via Library Manager:
-   - **RadioLib** (version 7.1 or later)
-   - **heltec-eink-modules**
-3. Open `cypher32.ino`. All headers must be in the same folder.
-4. Select board: **Heltec Wireless Paper**.
-5. Click **Upload**.
-
-**PlatformIO:**
+**PlatformIO (recommended):**
 ```
 pio run -e long -t upload      # or -e fast / -e epic
 ```
 Dependencies are declared in `platformio.ini` and pulled automatically. There
-is one environment per range profile; `long` is the default.
+is one environment per range profile; `long` is the default. The board
+definition is in `boards/lilygo_t_deck.json`.
+
+**Arduino IDE:**
+1. Install the **esp32** board package (Espressif, 2.0.x) via Boards Manager.
+2. Install these libraries via Library Manager:
+   - **RadioLib** (version 7.1 or later)
+   - **Adafruit GFX Library**
+   - **Adafruit ST7735 and ST7789 Library**
+3. Open `cypher32.ino`. All headers must be in the same folder.
+4. Add `#define CYPHER32_TDECK` as the very first line of `cypher32.ino`.
+5. Board: **ESP32S3 Dev Module**, with Flash Size **16MB**, PSRAM
+   **OPI PSRAM**, Partition Scheme **16M Flash (3MB APP/9.9MB FATFS)** or any
+   16 MB scheme, USB CDC On Boot **Enabled**.
+6. Click **Upload**.
 
 </details>
 
@@ -117,7 +215,7 @@ is one environment per range profile; `long` is the default.
 
 ### Step 2 — Power on
 
-Connect a LiPo battery or plug in USB. The e-ink display boots, then holds on the **setup screen** — waiting for you to identify yourself.
+Plug in USB-C or connect a LiPo, and slide the power switch on. The screen boots, then holds on the **setup screen** — waiting for you to identify yourself.
 
 The device is already broadcasting. An open Wi-Fi network named **`Cypher32`** appears. No password. No ceremony.
 
@@ -125,11 +223,12 @@ The device is already broadcasting. An open Wi-Fi network named **`Cypher32`** a
 
 ### Step 3 — Connect
 
-<img src="docs/img/eink-setup-qr.png" width="440" alt="The join screen: a QR code beside SCAN TO JOIN, the SSID, and 'No password. Then 192.168.4.1'">
+<img src="docs/img/tdeck/tdeck-setup.png" width="440" alt="The join screen: a QR code beside SCAN TO JOIN, the SSID, and 'No password. Then 192.168.4.1'">
 
 The device shows a **Wi-Fi QR code** on its screen. Point your camera at it and
-your phone offers to join — no typing an SSID. (Any time later, HUD → SHOW JOIN
-QR ON DEVICE puts it back up for a minute so someone else can scan it.)
+your phone offers to join — no typing an SSID. (Any time later, <kbd>Q</kbd> on
+the keyboard, or HUD → SHOW JOIN QR ON DEVICE in the portal, puts it back up for
+a minute so someone else can scan it.)
 
 Or join **`Cypher32`** manually. The portal should open by itself —
 the device runs a captive portal, so your phone's "sign in to network" prompt
@@ -176,7 +275,7 @@ but not impossible once you have a few dozen in play.
 
 The display comes alive:
 
-<img src="docs/img/eink-idle.png" width="440" alt="The idle screen">
+<img src="docs/img/tdeck/tdeck-idle.png" width="440" alt="The idle screen">
 
 - Name, faction, and level in the header
 - Your character — idle for now, watching
@@ -188,14 +287,15 @@ anyone, but every action now needs your password. Your device beacons every
 12–18 seconds at first so nearby players find you quickly, settling to 25–35
 seconds once you've been discovered.
 
-> **Factory reset:** tap **RST** twice quickly, then hold **PRG** for 5 seconds.
-> The screen confirms before it wipes. This needs no password — holding the
-> button on the device is the proof you own it, so it is also the way back in
-> if you forget one.
+> **Factory reset:** press <kbd>W</kbd> three times within three seconds, then
+> hold the **trackball** pressed for 5 seconds. The screen confirms before it
+> wipes. This needs no password — having the device in your hands is the proof
+> you own it, so it is also the way back in if you forget one.
 >
-> Both buttons are involved because RST is wired to the ESP32's reset pin
-> rather than a GPIO: software cannot read it, so the double tap is inferred
-> from two boots cut short in a row, and PRG confirms.
+> The T-Deck has no RST button, so the Wireless Paper's "tap RST twice" becomes
+> three W presses. (Two quick power-cycles on battery arm it too, since that is
+> what the double tap looks like to the firmware.) Arming alone does nothing;
+> it lapses after 20 seconds if the trackball is not held.
 
 ---
 
@@ -545,7 +645,7 @@ there are. The full arithmetic is in `ROADMAP.md`.
 
 ## Device screens
 
-The e-ink screen only refreshes when something happens — a hack result, an incoming message, a level-up, or a mood shift every 10 minutes. No wasted cycles. No flicker mid-play, and nothing at all drawn while the radio is busy.
+The game screen only redraws when something happens — a hack result, an incoming message, a level-up, or a mood shift every 10 minutes. (The screens below are shown as the original e-ink panel draws them; the T-Deck shows the same pixels, scaled and in colour.)
 
 - **Header** — name, faction initial, level, battery %
 - **Character** — idle / focused / victory / defeat
@@ -554,12 +654,11 @@ The e-ink screen only refreshes when something happens — a hack result, an inc
 
 The character notices when you're losing.
 
-**One button, three pages.** A short press on **PRG** side-scrolls the display:
-the avatar, then the last message anyone sent you, then the faction census.
-Press again and you are back at the avatar. Three markers in the header rule
-show where you are. Hold the button instead and nothing happens — the long
-hold is still the factory-reset confirm, and it is deliberately unreachable
-unless you armed it with a double **RST** tap first.
+**Three pages.** Roll the trackball (or press it, or press <kbd>Space</kbd>) to
+move between the avatar, the last message anyone sent you, and the faction
+census. Three markers in the header rule show where you are. Holding the
+trackball does nothing — the long hold is the factory-reset confirm, and it is
+deliberately unreachable unless you armed it first.
 
 <table>
 <tr>
@@ -602,7 +701,7 @@ unless you armed it with a double **RST** tap first.
 <td><img src="docs/img/eink-wiping.png" alt="Wiping"></td>
 </tr>
 <tr>
-<td align="center"><sub>Two taps of RST. Nothing has happened yet.</sub></td>
+<td align="center"><sub>Armed. Nothing has happened yet.</sub></td>
 <td align="center"><sub>Let go and it stops. Keep holding and it does not.</sub></td>
 </tr>
 </table>
@@ -621,7 +720,10 @@ unless you armed it with a double **RST** tap first.
 | `cypher32_crypto.h` | SHA-256 / HMAC-SHA256 for frame signing |
 | `cypher32_portal.h` | The web portal, one HTML/CSS/JS blob in PROGMEM |
 | `cypher32_qr.h` | Minimal QR encoder for the Wi-Fi join code |
-| `platformio.ini` | PlatformIO build config |
+| `tdeck_hw.h` | T-Deck pins, power, shared SPI bus, the scaled TFT display |
+| `tdeck_ui.h` | T-Deck keyboard, trackball, status strip, message composer |
+| `platformio.ini` | PlatformIO build config (T-Deck default, Heltec still available) |
+| `boards/lilygo_t_deck.json` | PlatformIO board definition for the T-Deck |
 | `ROADMAP.md` | Development plan and current status |
 | `test/` | Everything below |
 | `docs/img/` | Generated — see `make shots` |
@@ -644,10 +746,11 @@ cd test && make shots    # regenerate every image in docs/img
 | `layout` | The page in real Chromium at five phone sizes — nothing off-screen, nothing unreachable |
 | `flasher` | The browser installer page in real Chromium — the profile picker, the browser gate, a blocked CDN |
 | `qr` | The encoder against `python-qrcode`, then the result decoded by OpenCV |
+| `tdeck` | The join QR pushed through the T-Deck's scaler, decoded by OpenCV in every colour theme |
 
 **The firmware is compiled for the real chip in CI.** `.github/workflows/firmware.yml`
-builds all three range profiles with PlatformIO on every push, merges each into
-a single flashable image, and publishes the installer page. Until that existed,
+builds all three range profiles for the T-Deck with PlatformIO on every push,
+merges each into a single flashable image, and publishes the installer page. Until that existed,
 this firmware had never been built for an ESP32 at all.
 
 Two of the host stages are worth spelling out, because they run where **no

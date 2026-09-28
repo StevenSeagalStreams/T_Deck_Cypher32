@@ -15,8 +15,8 @@ CXX      ?= g++
 CXXFLAGS := -std=c++17 -I stub -Wall -Wno-format
 BINS     := test_link test_twonode test_mesh test_pages
 
-.PHONY: all run asan portal lint qr sketch shots clean
-all: lint sketch run profiles portal flasher qr
+.PHONY: all run asan portal lint qr sketch shots clean tdeck
+all: lint sketch run profiles portal flasher qr tdeck
 
 run: $(BINS)
 	@for b in $(BINS); do echo "── $$b ──"; ./$$b || exit 1; echo; done
@@ -51,12 +51,18 @@ sketch: render_eink
 	@echo "── sketch build ──"
 	@mkdir -p out && ./render_eink out
 
+# The T-Deck's scaled screen: the join QR must survive the 1.28x scaler.
+tdeck: render_eink
+	@echo "── tdeck ──"
+	@mkdir -p out && ./render_eink out >/dev/null && python3 test_tdeck_qr.py
+
 # Regenerate every image in docs/img. Not part of `all`: it needs Chromium and
 # Pillow, and it rewrites files that are committed.
 shots: render_eink
 	@mkdir -p out ../docs/img
 	@./render_eink out
 	@python3 pbm2png.py out ../docs/img
+	@python3 tdeck_preview.py out ../docs/img/tdeck
 	@python3 portal/extract.py >/dev/null
 	@NODE_PATH=$${NODE_PATH:-/opt/node22/lib/node_modules} node shoot_portal.js ../docs/img
 

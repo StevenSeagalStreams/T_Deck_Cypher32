@@ -1,4 +1,10 @@
-#include <heltec-eink-modules.h>
+#if defined(CYPHER32_TDECK)
+  // LilyGo T-Deck: the TFT stands in for the e-ink panel — see tdeck_hw.h.
+  // Its header comes after cypher32_lora.h below, because the TFT shares the
+  // radio's SPI bus.
+#else
+  #include <heltec-eink-modules.h>
+#endif
 #include <WiFi.h>
 #include <Preferences.h>
 #include <WebServer.h>
@@ -10,9 +16,17 @@
 #include "cypher32_portal.h"
 #include "cypher32_qr.h"
 
+#if defined(CYPHER32_TDECK)
+#include "tdeck_hw.h"
+// 250x122 one-bit canvas, scaled onto the T-Deck's 320x240 TFT by update().
+// Pointer for the same reason as below: nothing may touch the bus before the
+// peripheral power rail is on.
+TDeckPanel* displayPtr = nullptr;
+#else
 // Heltec Wireless Paper V1.2 — 250x122px landscape
 // Pointer: constructor must NOT run at global init time (before Vext is on)
 EInkDisplay_WirelessPaperV1_2* displayPtr = nullptr;
+#endif
 #define display (*displayPtr)
 
 Preferences preferences;
@@ -40,9 +54,18 @@ uint32_t myChipID32 = makeChipID();
 // ─────────────────────────────────────────────
 //  HARDWARE PINS
 // ─────────────────────────────────────────────
+#if defined(CYPHER32_TDECK)
+// T-Deck: no ADC enable line, the divider is always connected. The trackball
+// press is GPIO0 — the same pin as the Wireless Paper's PRG button — so every
+// PRG gesture below (short press = next page, hold = confirm a wipe) works
+// unchanged on the trackball.
+#define BATTERY_PIN TDECK_BAT_ADC
+#define PRG_PIN     TDECK_TB_CLICK
+#else
 #define ADC_CTRL    19
 #define BATTERY_PIN 20
 #define PRG_PIN     0    // Built-in PRG button on Wireless Paper (active LOW)
+#endif
 #define RESET_HOLD_MS 5000  // Hold 5 seconds to trigger factory reset
 
 // ── Two-button factory reset ─────────────────
@@ -460,8 +483,14 @@ unsigned long bootEpoch = 0;  // seconds since first-ever boot (incremented each
 // ─────────────────────────────────────────────
 
 void VextON() {
+#if defined(CYPHER32_TDECK)
+  // GPIO18 is I2C SDA on the T-Deck, not an LED — driving it low here would
+  // hold the keyboard bus down. The T-Deck's rail is GPIO10.
+  tdeckPowerOn();
+#else
   pinMode(18, OUTPUT);       digitalWrite(18, LOW);
   pinMode(ADC_CTRL, OUTPUT); digitalWrite(ADC_CTRL, LOW);
+#endif
 }
 
 String getChipID() {
@@ -476,7 +505,9 @@ uint32_t battLastRaw = 0;
 uint32_t battLastMv  = 0;
 
 float getBatteryVoltage() {
+#ifdef ADC_CTRL
   digitalWrite(ADC_CTRL, LOW); delay(10);
+#endif
 
   // analogReadMilliVolts() applies the chip's factory eFuse calibration.
   // The previous code scaled a raw analogRead() as if the ADC were linear
@@ -1722,7 +1753,11 @@ void displayArmed() {
   displayRefreshes++;
   display.clearMemory(); display.landscape();
   printCenter(34, "FACTORY RESET ARMED");
+#if defined(CYPHER32_TDECK)
+  printCenter(52, "HOLD TRACKBALL 5s TO WIPE");
+#else
   printCenter(52, "HOLD PRG 5s TO WIPE");
+#endif
   printCenter(70, "OR WAIT TO CANCEL");
   panelUpdate();
 }
@@ -1732,6 +1767,9 @@ void displayArmed() {
 void displayQr(const String& ssid, const char* line1, const char* line2) {
   displayRefreshes++;
   display.clearMemory(); display.landscape();
+#if defined(CYPHER32_TDECK)
+  display.paperFrame = true;       // cameras want dark modules on light
+#endif
 
   QrCode q;
   String payload = qrWifiString(ssid);
@@ -1781,6 +1819,11 @@ void servicePageButton() {
     // state, and the player's next instinct is to hold the button. That wipes
     // the device. A press while armed does nothing at all.
     if (resetArmed) continue;
+#if defined(CYPHER32_TDECK)
+    // While the composer is open the trackball press means "send", not
+    // "next page".
+    if (tdeckTakesClick()) continue;
+#endif
     pageWanted  = (uint8_t)((pageWanted + 1) % PAGE_COUNT);
     pageDirtyAt = millis();
     revertIdleAtMs = 0;        // a press dismisses any transient, QR included
@@ -2633,6 +2676,10 @@ void serviceFactoryResetButton() {
   }
 }
 
+#if defined(CYPHER32_TDECK)
+#include "tdeck_ui.h"
+#endif
+
 void setup() {
   Serial.begin(115200);
   delay(100);
@@ -2658,7 +2705,13 @@ void setup() {
   delay(200);  // power rail stabilisation
 
   // Display allocated AFTER VextON — global constructor crashes before Vext is on
+#if defined(CYPHER32_TDECK)
+  displayPtr = new TDeckPanel();
+  tdeckLoadPrefs();
+  tdeckDisplayBegin();
+#else
   displayPtr = new EInkDisplay_WirelessPaperV1_2();
+#endif
   analogReadResolution(12);
   display.landscape();
 
@@ -2722,6 +2775,10 @@ void setup() {
   // CHANGE, not FALLING: the release edge is what decides a short press, and
   // the press edge is what times it.
   attachInterrupt(digitalPinToInterrupt(PRG_PIN), prgISR, CHANGE);
+#if defined(CYPHER32_TDECK)
+  tdeckInputBegin();
+  tdeckStripDirty = true;
+#endif
 
 }
 
@@ -2735,6 +2792,9 @@ void loop() {
   loraTick();
   serviceFactoryResetButton();   // before the early return: must work even
                                  // on an unconfigured or locked-out device
+#if defined(CYPHER32_TDECK)
+  tdeckTick();                   // keyboard, trackball, status strip
+#endif
 
   if (restartPending && (int32_t)(millis() - restartAtMs) >= 0) {
     Serial.println("[SYS] restarting");

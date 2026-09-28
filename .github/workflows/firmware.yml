@@ -1,4 +1,4 @@
-# Build the firmware for the real target, and publish a browser flasher.
+# Build the T-Deck firmware for the real target, and publish a browser flasher.
 #
 # Until this existed, nothing in this repository had ever compiled cypher32.ino
 # for an ESP32. The host test suite compiles the sketch against stubs, which
@@ -33,12 +33,15 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install test tooling
         run: |
-          python3 -m pip install --quiet pillow
+          python3 -m pip install --quiet pillow opencv-python-headless numpy
           npm install --no-save --silent playwright
           npx --yes playwright install --with-deps chromium
       - name: Lint, unit tests, every range profile
         working-directory: test
         run: make lint && make run && make profiles
+      - name: T-Deck join QR scans through the TFT scaler
+        working-directory: test
+        run: make tdeck
       - name: Flasher page
         working-directory: test
         run: NODE_PATH="$GITHUB_WORKSPACE/node_modules" node test_flasher.js
