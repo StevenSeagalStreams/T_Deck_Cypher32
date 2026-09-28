@@ -46,6 +46,44 @@ jobs:
         working-directory: test
         run: NODE_PATH="$GITHUB_WORKSPACE/node_modules" node test_flasher.js
 
+  arduino-ide:
+    # The Arduino IDE builds differently from PlatformIO: it runs its own
+    # preprocessor over the .ino, which writes a prototype for every function
+    # above the first one. A type declared further down then "does not name a
+    # type" in the IDE while building fine everywhere else — which is exactly
+    # how a broken build once reached a player. This builds the sketch the
+    # way the IDE does, with the settings the README tells people to use.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: cypher32
+      - name: Install arduino-cli
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | BINDIR=$HOME/bin sh
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+      - name: Cache the ESP32 core
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.arduino15
+            ~/Arduino/libraries
+          key: arduino-esp32-3.2.0-v1
+      - name: Install the ESP32 core and libraries
+        run: |
+          arduino-cli config init --overwrite
+          arduino-cli config add board_manager.additional_urls \
+            https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32@3.2.0
+          arduino-cli lib install RadioLib "Adafruit GFX Library" "Adafruit ST7735 and ST7789 Library"
+      - name: Build as the Arduino IDE does (ESP32S3 Dev Module, OPI PSRAM, 16 MB)
+        run: |
+          rm -rf cypher32/test
+          arduino-cli compile --fqbn \
+            "esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,CDCOnBoot=cdc" \
+            cypher32
+
   build:
     runs-on: ubuntu-latest
     strategy:

@@ -67,6 +67,12 @@ struct HackResult {
   String note;
 };
 
+// The result of a game action (see GAME ACTIONS): code 200 and a message, or
+// an error code and the reason. Up here for the same reason as HackResult.
+struct ActResult { int code; String msg; bool instant; };
+// One tier of a dossier, as it comes off a cleared recon round.
+struct ReconReveal { int tier; const char* field; const char* label; String value; };
+
 // Unique chip ID using ALL 6 MAC bytes folded into 32 bits via XOR
 // Placed after HackResult to avoid Arduino preprocessor ordering issues
 static uint32_t makeChipID() {
@@ -1941,9 +1947,9 @@ String factionFromSSID(String ssid) {
 //  which meant a second front end would have had to copy the rules — and two
 //  copies of a rule drift. Each returns code 200 and a message, or an error
 //  code and the reason, in the words the portal has always shown.
-struct ActResult { int code; String msg; bool instant; };
-// One tier of a dossier, as it comes off a cleared recon round.
-struct ReconReveal { int tier; const char* field; const char* label; String value; };
+// (ActResult and ReconReveal are declared at the top of the sketch, beside
+// HackResult: the Arduino IDE writes a prototype for every function above
+// the first one, and those prototypes need the types to exist already.)
 static ActResult actOk(const String& m, bool instant = true) { return { 200, m, instant }; }
 static ActResult actErr(int c, const String& m)              { return { c, m, false }; }
 
