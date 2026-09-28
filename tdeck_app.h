@@ -589,10 +589,10 @@ static void reconTick(uint32_t now) {
       break;
     case RC_NEXT:
       if (rc.flash >= 0 && (int32_t)(now - rc.flashUntil) > 0) { rc.flash = -1; ui.dirty = true; }
-      if (now - rc.t0 > 450) reconNextRound();
+      if ((int32_t)(now - rc.t0) > 450) reconNextRound();
       break;
     case RC_BACKDOOR:
-      if (now - rc.t0 > 220) {
+      if ((int32_t)(now - rc.t0) > 220) {
         rc.t0 = now;
         if (rc.bdStep < 7) { reconReveal(RC_TIERS[rc.bdStep++]); sfx(SFX_TILE0); ui.dirty = true; }
         else { rc.best = RECON_MAX_SEQ; reconFinish("Backdoor still open."); }
@@ -804,7 +804,7 @@ static void drawHome(uint32_t now) {
   blitAvatar(AV_X, AV_Y);
   // Bubble.
   static int lastBand = 99;
-  if (!ui.bubble.length() || now - ui.bubbleAt > 25000 || moodBand() != lastBand) {
+  if (!ui.bubble.length() || (int32_t)(now - ui.bubbleAt) > 25000 || moodBand() != lastBand) {
     lastBand = moodBand();
     ui.bubble = (statWon + statLost == 0 && trainingActive()) ? String(firstRunLine()) : String(getIdleBubble());
     ui.bubbleAt = now;
@@ -1907,9 +1907,16 @@ void tdeckTick() {
   }
   (void)input;
 
+  // Handling input takes time (each keyboard read is an I2C transaction) and
+  // stamps things with millis() as it goes — last input, a recon round's
+  // start, a breach's start. Everything below must measure against a clock
+  // read after that, or "now - stamp" goes negative and wraps to ~49 days:
+  // which is exactly how a keypress used to switch the screen off.
+  now = millis();
+
   // ── power ──
   uint16_t tmo = TIMEOUT_S[tdp.timeout];
-  uint32_t idle = now - ui.lastInput;
+  uint32_t idle = (int32_t)(now - ui.lastInput) > 0 ? now - ui.lastInput : 0;
   bool busy = ui.modal == M_RECON || ui.modal == M_BREACH || ui.modal == M_SETUP;
   if (!busy && tmo && idle > (uint32_t)tmo * 1000UL && !ui.asleep) {
     ui.asleep = true; av.night = true; tdeckScreenPower(false);
@@ -1936,7 +1943,7 @@ void tdeckTick() {
     else if (ui.cardUntil && (int32_t)(now - ui.cardUntil) > 0) dismissCard();
   }
   pumpCards();
-  if (ui.modal == M_BREACH && !hackInFlight && !hackTimedOut && now - ui.breachStart > 1500) {
+  if (ui.modal == M_BREACH && !hackInFlight && !hackTimedOut && (int32_t)(now - ui.breachStart) > 1500) {
     ui.modal = ui.target ? M_DOSSIER : M_NONE; ui.dirty = true;   // verdict card will follow
   }
   if (ui.modal == M_DOSSIER && ui.hackArmUntil && (int32_t)(now - ui.hackArmUntil) > 0) { ui.hackArmUntil = 0; ui.dirty = true; }

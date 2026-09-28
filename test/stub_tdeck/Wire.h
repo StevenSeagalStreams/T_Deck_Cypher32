@@ -9,6 +9,9 @@ struct TwoWire {
   bool begin(int = -1, int = -1, uint32_t = 0) { return true; }
   void setClock(uint32_t) {}
   uint8_t requestFrom(uint8_t, uint8_t n) {
+    // A real I2C read takes about a millisecond. Time passing here, in the
+    // middle of a frame, is what exposed the screen blanking on a keypress.
+    extern uint32_t g_millis; g_millis += 1;
     pending = g_keyQueue.empty() ? 0 : g_keyQueue.front();
     if (!g_keyQueue.empty()) g_keyQueue.pop_front();
     return n ? 1 : 0;

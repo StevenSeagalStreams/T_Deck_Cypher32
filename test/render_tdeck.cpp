@@ -261,6 +261,25 @@ int main(int argc, char** argv) {
   tdeckEvtNewNode(0xBEEF0002);
   ck(ui.toastUntil != 0, "a new node shows a toast");
 
+  // ── a keypress must never switch the screen off ──
+  // The frame loop read the clock before the keyboard, and the keypress
+  // stamped "last input" a millisecond later; now - lastInput went negative,
+  // wrapped to ~49 days, and the screen went black on the spot.
+  printf("screen stays on\n");
+  {
+    ui.modal = M_NONE; wake(); run(200);
+    bool blanked = false;
+    for (int i = 0; i < 40 && !blanked; i++) {
+      key(i % 2 ? 'h' : 'r');
+      if (ui.asleep || !tdeckScreenOn) blanked = true;
+    }
+    ck(!blanked, "pressing keys never switches the screen off");
+    for (int i = 0; i < 20 && !blanked; i++) { roll(i % 2 ? 1 : -1, 0); if (ui.asleep || !tdeckScreenOn) blanked = true; }
+    ck(!blanked, "nor does rolling the trackball");
+    for (int i = 0; i < 20 && !blanked; i++) { press(); key(0x08); if (ui.asleep || !tdeckScreenOn) blanked = true; }
+    ck(!blanked, "nor does pressing it");
+  }
+
   // ── regressions found in review ──
   printf("regressions\n");
   // The radar acts on the highlighted node even after the list re-sorts.

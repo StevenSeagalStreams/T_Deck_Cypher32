@@ -277,7 +277,7 @@ void Avatar::draw(uint32_t now) {
   if (!cv || !cv->getBuffer()) return;
   GFXcanvas16& c = *cv;
   AvReaction r = reacting(now) ? react : AV_R_NONE;
-  uint32_t age = r ? now - reactStart : 0;
+  uint32_t age = (r && (int32_t)(now - reactStart) > 0) ? now - reactStart : 0;
 
   // Palette.
   uint16_t hood    = avRgb(34, 38, 48);
