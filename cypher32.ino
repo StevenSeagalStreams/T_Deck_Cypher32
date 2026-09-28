@@ -1,3 +1,14 @@
+// ── Which board ──────────────────────────────
+//  This repository is the T-Deck edition, so a plain ESP32 build — the Arduino
+//  IDE, which has no way to pass build flags — is a T-Deck build. To build the
+//  original Heltec Wireless Paper firmware from this tree instead, define
+//  CYPHER32_HELTEC (PlatformIO's heltec_* environments do). The host test
+//  suite is not an ESP32 build, so it keeps compiling the Heltec path it was
+//  written against.
+#if defined(ARDUINO_ARCH_ESP32) && !defined(CYPHER32_HELTEC) && !defined(CYPHER32_TDECK)
+  #define CYPHER32_TDECK
+#endif
+
 #if defined(CYPHER32_TDECK)
   // LilyGo T-Deck: the TFT stands in for the e-ink panel — see tdeck_hw.h.
   // Its header comes after cypher32_lora.h below, because the TFT shares the

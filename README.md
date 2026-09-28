@@ -203,11 +203,15 @@ definition is in `boards/lilygo_t_deck.json`.
    - **Adafruit GFX Library**
    - **Adafruit ST7735 and ST7789 Library**
 3. Open `cypher32.ino`. All headers must be in the same folder.
-4. Add `#define CYPHER32_TDECK` as the very first line of `cypher32.ino`.
-5. Board: **ESP32S3 Dev Module**, with Flash Size **16MB**, PSRAM
+4. Board: **ESP32S3 Dev Module**, with Flash Size **16MB**, PSRAM
    **OPI PSRAM**, Partition Scheme **16M Flash (3MB APP/9.9MB FATFS)** or any
    16 MB scheme, USB CDC On Boot **Enabled**.
-6. Click **Upload**.
+5. Click **Upload**.
+
+The sketch builds for the T-Deck by default; no flag is needed. (To build the
+original Heltec Wireless Paper firmware from this tree, add
+`#define CYPHER32_HELTEC` as the first line of `cypher32.ino`.) Tested with
+Espressif's ESP32 core 2.0.17 and 3.2.0.
 
 </details>
 
