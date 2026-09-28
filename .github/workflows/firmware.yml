@@ -60,6 +60,7 @@ jobs:
           path: cypher32
       - name: Install arduino-cli
         run: |
+          mkdir -p "$HOME/bin"
           curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | BINDIR=$HOME/bin sh
           echo "$HOME/bin" >> "$GITHUB_PATH"
       - name: Cache the ESP32 core
