@@ -38,6 +38,21 @@ TDeckPanel* displayPtr = nullptr;
 // Pointer: constructor must NOT run at global init time (before Vext is on)
 EInkDisplay_WirelessPaperV1_2* displayPtr = nullptr;
 #endif
+
+// Every game event surfaces through one of the display*() functions below.
+// On the T-Deck each hands its event to the app (tdeck_app.h) and returns
+// before drawing; on the Wireless Paper this expands to nothing.
+#if defined(CYPHER32_TDECK)
+  #define TDECK_ROUTE(call) do { call; return; } while (0)
+#else
+  #define TDECK_ROUTE(call) do {} while (0)
+#endif
+// The web portal runs unless the T-Deck's settings say otherwise.
+#if defined(CYPHER32_TDECK)
+  #define portalEnabled() tdeckPortalEnabled()
+#else
+  #define portalEnabled() true
+#endif
 #define display (*displayPtr)
 
 Preferences preferences;
@@ -168,7 +183,7 @@ void IRAM_ATTR prgISR() {
   if (low) { prgPressMs = now; return; }            // press
   // Release. A short press is only a page flip; anything longer is either a
   // reset hold or a deliberate nothing, and both are handled by the poller.
-  if (prgPressMs && (now - prgPressMs) < PRG_SHORT_MAX_MS) prgShortSeq++;
+  if (prgPressMs && (now - prgPressMs) < PRG_SHORT_MAX_MS) prgShortSeq = prgShortSeq + 1;
 }
 
 #ifndef BLACK
@@ -1466,6 +1481,7 @@ bool idleNeedsRefresh() {
 }
 
 void displayIdle() {
+  TDECK_ROUTE(tdeckRedraw());
   displayRefreshes++;
   display.clearMemory(); display.landscape(); drawHeader();
   drawPageDots(PAGE_IDLE);   // page 1 has to show that pages 2 and 3 exist
@@ -1479,6 +1495,7 @@ void displayIdle() {
 }
 
 void displayScanning() {
+  TDECK_ROUTE(tdeckRedraw());
   display.clearMemory(); display.landscape(); drawHeader();
   // Large focused sprite, one bubble line only
   drawSprite(spr_idle2, SPR_IDLE2_W, SPR_IDLE2_H, FACE_Y);
@@ -1487,6 +1504,7 @@ void displayScanning() {
 }
 
 void displayTargetFound(String tid, int fw, int att, int pool) {
+  TDECK_ROUTE(tdeckRedraw());
   display.clearMemory(); display.landscape(); drawHeader();
   drawSprite(spr_idle2, SPR_IDLE2_W, SPR_IDLE2_H, FACE_Y);
   { String nd="Node: "+tid; String od="P:"+String(pool)+" T:"+String(att);
@@ -1496,6 +1514,7 @@ void displayTargetFound(String tid, int fw, int att, int pool) {
 }
 
 void displayAttacking(String tid) {
+  TDECK_ROUTE(tdeckRedraw());
   display.clearMemory(); display.landscape(); drawHeader();
   drawSprite(spr_idle2, SPR_IDLE2_W, SPR_IDLE2_H, FACE_Y);
   drawBubbleRight("BREACH ATTEMPT", "Breaking firewall...", "Go go go!");
@@ -1507,6 +1526,7 @@ void displayAttacking(String tid) {
 // rather than every time something happened — and callers that also adjusted
 // mood double-counted. Mood belongs to the event, not to the rendering.
 void displayHackSuccess(String tid, int xp, String note) {
+  TDECK_ROUTE(tdeckEvtHack(true, tid, xp, note));
   display.clearMemory(); display.landscape(); drawHeader();
   drawSprite(spr_victory, SPR_VICTORY_W, SPR_VICTORY_H, FACE_Y);
   { String nd="Node "+tid+" owned."; String xs="XP +"+String(xp);
@@ -1515,6 +1535,7 @@ void displayHackSuccess(String tid, int xp, String note) {
 }
 
 void displayHackFailed(String tid, int xp, String note) {
+  TDECK_ROUTE(tdeckEvtHack(false, tid, xp, note));
   display.clearMemory(); display.landscape(); drawHeader();
   drawSprite(spr_lost, SPR_LOST_W, SPR_LOST_H, FACE_Y);
   { String nd="Node "+tid+" held."; String xs="XP -"+String(xp);
@@ -1523,6 +1544,7 @@ void displayHackFailed(String tid, int xp, String note) {
 }
 
 void displayImmune(String tid) {
+  TDECK_ROUTE(tdeckRedraw());
   display.clearMemory(); display.landscape(); drawHeader();
   drawSprite(spr_bored, SPR_BORED_W, SPR_BORED_H, FACE_Y);
   drawBubbleRight("TARGET IMMUNE", "Faction block.", "Can't touch this.");
@@ -1530,6 +1552,7 @@ void displayImmune(String tid) {
 }
 
 void displayIncomingMsg(String fromId, String msg) {
+  TDECK_ROUTE(tdeckEvtMessage(fromId, msg));
   display.clearMemory(); display.landscape(); drawHeader();
   drawSprite(spr_idle1, SPR_IDLE1_W, SPR_IDLE1_H, FACE_Y);
   uint32_t fid = (uint32_t)strtoul(fromId.c_str(), nullptr, 16);
@@ -1546,6 +1569,7 @@ void displayIncomingMsg(String fromId, String msg) {
 }
 
 void displayLevelUp() {
+  TDECK_ROUTE(tdeckEvtLevelUp());
   display.clearMemory(); display.landscape();
   drawSep(10);
   printCenter(2, "*** LEVEL UP! ***");
@@ -1561,6 +1585,7 @@ void displayLevelUp() {
 
 // Shown while PRG is being held, so a factory reset is not silent.
 void displayWiping() {
+  TDECK_ROUTE(tdeckEvtWiping());
   displayRefreshes++;
   display.clearMemory(); display.landscape();
   printCenter(40, "FACTORY RESET");
@@ -1572,6 +1597,7 @@ void displayWiping() {
 // Discovery is the moment this game turns on for people, so it gets the whole
 // screen rather than a line in a list.
 void displayNewNode(uint32_t id, uint8_t lvl, char fac) {
+  TDECK_ROUTE(tdeckEvtNewNode(id));
   displayRefreshes++;
   KnownNode* n = findNode(id);
   display.clearMemory(); display.landscape();
@@ -1642,6 +1668,7 @@ static String agoStr(uint32_t at) {
 // The footer goes: XP and skill bars are not what this page is about, and the
 // 34 px they cost is the difference between three lines of message and two.
 void displayLastMsg() {
+  TDECK_ROUTE(tdeckRedraw());
   displayRefreshes++;
   display.clearMemory(); display.landscape();
   drawHeader();
@@ -1727,6 +1754,7 @@ int censusCounts(int out[5]) {
 }
 
 void displayCensus() {
+  TDECK_ROUTE(tdeckRedraw());
   displayRefreshes++;
   const char* LBL[5] = {"BLACK", "WHITE", "RED", "GREEN", "UNKNOWN"};
   int cnt[5];
@@ -1761,14 +1789,11 @@ void displayCensus() {
 
 // Shown after a double RST tap, so the armed state is never invisible.
 void displayArmed() {
+  TDECK_ROUTE(tdeckEvtArmed());
   displayRefreshes++;
   display.clearMemory(); display.landscape();
   printCenter(34, "FACTORY RESET ARMED");
-#if defined(CYPHER32_TDECK)
-  printCenter(52, "HOLD TRACKBALL 5s TO WIPE");
-#else
   printCenter(52, "HOLD PRG 5s TO WIPE");
-#endif
   printCenter(70, "OR WAIT TO CANCEL");
   panelUpdate();
 }
@@ -1776,11 +1801,9 @@ void displayArmed() {
 // The Wi-Fi join QR. E-ink is ideal for this: it costs nothing to leave on
 // screen indefinitely, and pointing a camera beats typing an SSID.
 void displayQr(const String& ssid, const char* line1, const char* line2) {
+  TDECK_ROUTE(tdeckEvtQr());
   displayRefreshes++;
   display.clearMemory(); display.landscape();
-#if defined(CYPHER32_TDECK)
-  display.paperFrame = true;       // cameras want dark modules on light
-#endif
 
   QrCode q;
   String payload = qrWifiString(ssid);
@@ -1822,6 +1845,8 @@ void displaySetup() {
 // The wait is also what makes a mashed button feel like a control rather than
 // a queue: the panel follows the finger, it does not replay it.
 void servicePageButton() {
+  // The T-Deck app reads trackball presses itself (tdeck_app.h).
+  TDECK_ROUTE((void)0);
   uint32_t seq = prgShortSeq;                   // volatile, read once
   while (prgShortSeen != seq) {
     prgShortSeen++;
@@ -1830,11 +1855,6 @@ void servicePageButton() {
     // state, and the player's next instinct is to hold the button. That wipes
     // the device. A press while armed does nothing at all.
     if (resetArmed) continue;
-#if defined(CYPHER32_TDECK)
-    // While the composer is open the trackball press means "send", not
-    // "next page".
-    if (tdeckTakesClick()) continue;
-#endif
     pageWanted  = (uint8_t)((pageWanted + 1) % PAGE_COUNT);
     pageDirtyAt = millis();
     revertIdleAtMs = 0;        // a press dismisses any transient, QR included
@@ -1871,6 +1891,8 @@ void servicePageButton() {
 // everything, an unconfigured device must keep its join QR, and only then does
 // the player's page selection apply.
 void paintCurrentPage() {
+  // The same precedence as below: an armed wipe outranks every page.
+  TDECK_ROUTE(resetArmed ? tdeckEvtArmed() : tdeckRedraw());
   if (resetArmed)                            { displayArmed(); return; }
   if (myName == "" || myFaction == "NONE")   { displaySetup(); return; }
   switch (pageShown) {
@@ -1891,6 +1913,7 @@ void paintCurrentPage() {
 // ─────────────────────────────────────────────
 
 void updateBeacon(bool busy) {
+  if (!portalEnabled()) return;   // no access point, nothing to name
   // Open WiFi — no password, anyone can connect and open 192.168.4.1
   String ssid = (myName == "")
     ? "Cypher32"
@@ -1907,6 +1930,282 @@ String factionFromSSID(String ssid) {
   if (f == 'R') return "RED";
   if (f == 'G') return "GREEN";
   return "NONE";
+}
+
+// ─────────────────────────────────────────────
+//  GAME ACTIONS
+// ─────────────────────────────────────────────
+//
+//  Every move a player can make, in one place, shared by the web portal and
+//  the T-Deck's own screens. These used to live inside the HTTP handlers,
+//  which meant a second front end would have had to copy the rules — and two
+//  copies of a rule drift. Each returns code 200 and a message, or an error
+//  code and the reason, in the words the portal has always shown.
+struct ActResult { int code; String msg; bool instant; };
+// One tier of a dossier, as it comes off a cleared recon round.
+struct ReconReveal { int tier; const char* field; const char* label; String value; };
+static ActResult actOk(const String& m, bool instant = true) { return { 200, m, instant }; }
+static ActResult actErr(int c, const String& m)              { return { c, m, false }; }
+
+bool gameConfigured() { return !(myName == "" || myFaction == "NONE"); }
+
+// ── per-node views, gated by what recon has revealed ──
+// The portal's radar and the T-Deck's both read these, so an unscouted node
+// can never leak more on one than the other.
+int  nodeKnownLevel(KnownNode* n)   { return reconKnows(n, RECON_T_LEVEL) ? n->level : 0; }
+char nodeKnownFaction(KnownNode* n) { return reconKnows(n, RECON_T_FACTION) ? n->faction : '?'; }
+int  nodeKnownBrute(KnownNode* n)   { return reconKnows(n, RECON_T_BRUTE)    ? n->seen_brute    : -1; }
+int  nodeKnownStealth(KnownNode* n) { return reconKnows(n, RECON_T_STEALTH)  ? n->seen_stealth  : -1; }
+int  nodeKnownFirewall(KnownNode* n){ return reconKnows(n, RECON_T_FIREWALL) ? n->seen_firewall : -1; }
+// Judged on the faction we are allowed to see, not the real one.
+bool nodeCanHack(KnownNode* n)      { return canAttackFaction(nodeKnownFaction(n)); }
+bool nodeCanRecon(KnownNode* n) {
+  return hackCooldownLeft(chipIdStr(n->chip_id)) == 0 && (n->pwned || n->recon_count < 3);
+}
+// Real odds, but only once recon has revealed their firewall; -1 until then.
+int  nodeOdds(KnownNode* n) {
+  int fw = nodeKnownFirewall(n);
+  return fw < 0 ? -1 : loraHackChancePct(skillBrute, n->recon_score, skillStealth, fw);
+}
+int  trainingOdds() {
+  return trainScore >= RECON_T_FIREWALL
+           ? loraHackChancePct(skillBrute, trainScore, skillStealth, TRAIN_FIREWALL) : -1;
+}
+
+// ── first run ──
+// The portal insists on a password because its Wi-Fi is open to anyone. On a
+// device whose screen and keyboard are the only way in, holding it is the
+// proof, so the T-Deck may set up without one (the stored default stands).
+ActResult actSetup(const String& f, const String& p, bool requirePassword) {
+  if (gameConfigured()) {
+    Serial.println("[SETUP] refused — already configured");
+    return actErr(409, "Already configured — wipe the device first");
+  }
+  if (f != "BLACK" && f != "WHITE" && f != "RED" && f != "GREEN") {
+    Serial.println("[SETUP] refused — faction missing or unrecognised");
+    return actErr(400, "Faction missing — did the form reach the device?");
+  }
+  if ((requirePassword || p.length() > 0) && p.length() < 6) {
+    Serial.println("[SETUP] refused — password too short");
+    return actErr(400, "Password too short");
+  }
+  myFaction  = f;
+  if (p.length()) myPassword = p;
+  myName     = nodeNameFromId(myChipID32);
+  if      (f == "BLACK") skillBrute    += 3;
+  else if (f == "WHITE") skillFirewall += 3;
+  else if (f == "RED")   skillStealth  += 3;
+  else { skillBrute++; skillStealth++; skillFirewall++; }
+  saveProgress();
+  Serial.printf("[SETUP] configured as %s (%s) — rebooting\n",
+                myName.c_str(), myFaction.c_str());
+  return actOk("Configured");
+}
+
+ActResult actSkill(const String& s) {
+  if (skillPoints < 1) return actErr(400, "No skill points");
+  if      (s == "brute")    skillBrute++;
+  else if (s == "stealth")  skillStealth++;
+  else if (s == "firewall") skillFirewall++;
+  else return actErr(400, "Unknown skill");
+  skillPoints--; saveProgress();
+  return actOk("Skill raised");
+}
+
+ActResult actClearNodes() {
+  knownCount = 0; memset(knownNodes, 0, sizeof(knownNodes));
+  return actOk("Node list cleared");
+}
+
+// ── recon ──
+// Opens the link. For a real node this sends RECON and returns with instant
+// false: the dossier arrives later, and reconProbe.state says when. The
+// training dummy's dossier is staged at once (instant true).
+ActResult actReconOpen(uint32_t target) {
+  if (target == TRAINING_ID) {
+    if (!trainingActive()) return actErr(400, "Training is over — you levelled up");
+    if (trainRecon >= 3)   return actErr(400, "Practice recon spent — try the hack");
+    // No radio, no wait: the dummy's dossier is on this device already.
+    loraReconProbeLocal(TRAINING_ID, 1, 'G', TRAIN_BRUTE, TRAIN_STEALTH, TRAIN_FIREWALL);
+    return actOk("Link up — practice target");
+  }
+  if (!loraReady)  return actErr(503, "Radio offline");
+  if (target == 0) return actErr(400, "Bad target");
+  KnownNode* n = findNode(target);
+  if (!n) return actErr(404, "Node not in range");
+  String nid = chipIdStr(target);
+  // No scouting while the node is locked. The lock expiring is what hands
+  // back the three attempts, so playing during it would defeat the reset.
+  if (hackCooldownLeft(nid) > 0)          return actErr(400, "Locked out — wait for the cooldown");
+  if (!n->pwned && n->recon_count >= 3)   return actErr(400, "Recon spent — hack it, or wait for the cooldown");
+  if (loraActionPending())                return actErr(429, "Another action in flight");
+  loraReconProbeStart(target);
+  loraSendRecon(target);
+  Serial.printf("[RECON] probing %s\n", nid.c_str());
+  return actOk("Probing", /*instant=*/false);
+}
+
+// One cleared round: draws the dossier down to tier t and commits it. The
+// attempt is spent on the first piece of intel, not on opening the link — a
+// target that never answered, or a run that died in round one, costs nothing.
+// A backdoored node costs nothing either; that is the whole prize.
+bool actReconReveal(int t, ReconReveal* out) {
+  if (reconProbe.state != RECON_PROBE_READY) return false;
+  if (t < 1)             t = 1;
+  if (t > RECON_MAX_SEQ) t = RECON_MAX_SEQ;
+  uint32_t   id = reconProbe.target;
+  KnownNode* n  = findNode(id);
+  bool training = (id == TRAINING_ID);
+
+  if (!reconProbe.charged) {
+    reconProbe.charged = true;
+    if (training)              trainRecon++;
+    else if (n && !n->pwned) { n->recon_count++;
+                               reconLedgerSet(id, n->recon_count); }
+  }
+  if (training) {
+    if (t > trainScore) trainScore = (uint8_t)t;
+  } else if (n) {
+    if (t > n->recon_score) n->recon_score = (uint8_t)t;
+    if (t > n->intel)       n->intel       = (uint8_t)t;
+    if (t >= RECON_T_BRUTE)    n->seen_brute    = reconProbe.brute;
+    if (t >= RECON_T_STEALTH)  n->seen_stealth  = reconProbe.stealth;
+    if (t >= RECON_T_FIREWALL) n->seen_firewall = reconProbe.firewall;
+    if (t >= RECON_T_PWNED) {
+      if (!n->pwned) {
+        n->pwned = true;
+        logEvent(EV_PWNED, id, 0);
+        shiftMood(+2, "left a backdoor open");
+      }
+      // Persisted, so the one thing that is meant to last actually does.
+      recordBackdoor(chipIdStr(id), reconProbe.brute, reconProbe.stealth,
+                     reconProbe.firewall);
+      saveProgress();
+    }
+  }
+  if (out) {
+    out->tier = t; out->field = nullptr; out->label = nullptr; out->value = "";
+    switch (t) {
+      case RECON_T_NAME:     out->field = "name";     out->label = "CODENAME";
+                             out->value = training ? String("TRAINING") : nodeNameFromId(id); break;
+      case RECON_T_FACTION:  out->field = "faction";  out->label = "FACTION";
+                             out->value = String(reconProbe.faction); break;
+      case RECON_T_LEVEL:    out->field = "level";    out->label = "LEVEL";
+                             out->value = String(reconProbe.level); break;
+      case RECON_T_BRUTE:    out->field = "brute";    out->label = "BRUTE";
+                             out->value = String(reconProbe.brute); break;
+      case RECON_T_STEALTH:  out->field = "stealth";  out->label = "STEALTH";
+                             out->value = String(reconProbe.stealth); break;
+      case RECON_T_FIREWALL: out->field = "firewall"; out->label = "FIREWALL";
+                             out->value = String(reconProbe.firewall); break;
+      case RECON_T_PWNED:    out->field = "pwned";    out->label = "BACKDOOR";
+                             out->value = "OPEN"; break;
+    }
+  }
+  return true;
+}
+
+// Closes a run. Always returns the probe to idle, even if the target has aged
+// out of the table meanwhile — a probe left READY would stage a stale dossier
+// for the next run.
+ActResult actReconEnd(uint32_t target, int score) {
+  if (score < 0)             score = 0;
+  if (score > RECON_MAX_SEQ) score = RECON_MAX_SEQ;
+  if (target == TRAINING_ID) {
+    logEvent(EV_TRAIN, 0, 0);
+    reconProbe.state = RECON_PROBE_IDLE;
+    return actOk("Practice run logged — sequence " + String(trainScore));
+  }
+  KnownNode* n = findNode(target);
+  if (!n) { reconProbe.state = RECON_PROBE_IDLE; return actErr(404, "Node not in range"); }
+  Serial.printf("[RECON] %s run ended at %d (best %u, intel %u) -> +%d%% odds\n",
+                chipIdStr(target).c_str(), score, n->recon_score, n->intel,
+                (n->recon_score * RECON_MAX_BONUS) / RECON_MAX_SEQ);
+  if (score > 0) logEvent(EV_RECON, target, score);
+  if (score > statBestSeq) statBestSeq = score;
+  if (n->pwned)  shiftMood(+1, "walked back in through a backdoor");
+  reconProbe.state = RECON_PROBE_IDLE;
+  return actOk("Recon logged — sequence " + String(score));
+}
+
+// ── hacking ──
+// A real hack is fire-and-forget (instant false): the defender rolls and the
+// verdict arrives through loop()'s resolveHackVerdict(). The training dummy
+// resolves here and now (instant true).
+ActResult actHack(uint32_t target) {
+  if (target == TRAINING_ID) {
+    if (!trainingActive()) return actErr(400, "Training is over — you levelled up");
+    int pct = loraHackChancePct(skillBrute, trainScore, skillStealth, TRAIN_FIREWALL);
+    bool won = (random(0, 100) < pct);
+    HackResult r = resolveHackOutcome("GREEN", TRAIN_FIREWALL, won);
+    Serial.printf("[TRAIN] seq=%u odds=%d%% -> %s, XP %+d\n",
+                  trainScore, pct, r.success ? "WIN" : "LOSS", r.xpDelta);
+    logEvent(r.success ? EV_HACK_WON : EV_HACK_LOST, 0, r.xpDelta);
+    shiftMood(r.success ? +2 : -2, r.success ? "won a hack" : "lost a hack");
+    // Reset the round either way: practice should be repeatable, and there
+    // is no cooldown on a target that does not exist.
+    trainRecon = 0; trainScore = 0;
+    bool lvlUp = applyXP(r.xpDelta);
+    saveProgress();
+    if (r.success) displayHackSuccess("TRAINING", r.xpDelta, r.note);
+    else           displayHackFailed("TRAINING", abs(r.xpDelta), r.note);
+    if (lvlUp) { logEvent(EV_LEVEL, 0, 0); shiftMood(+3, "levelled up");
+                 displayLevelUp(); revertIdleAtMs = millis() + 6000; }
+    else                          revertIdleAtMs = millis() + 4000;
+    return actOk(r.success ? "Training breach — you are ready" : "Held off. Try again");
+  }
+  if (!loraReady)  return actErr(503, "Radio offline");
+  if (target == 0) return actErr(400, "Bad target");
+  KnownNode* n = findNode(target);
+  if (!n) return actErr(404, "Node not in range");
+  String nid = chipIdStr(target);
+  if (hackInFlight)         return actErr(429, "A hack is already running");
+  // Refuse immune targets here. This used to be checked only when XP was
+  // worked out, by which point the defender had already rolled and the node
+  // had been locked for half a day for a hack worth nothing.
+  if (!canAttackFaction(n->faction)) return actErr(400, "WHITE can only attack BLACK and RED");
+  if (recentlyHacked(nid))  return actErr(400, "Already owned — locked for 12 hours");
+  if (recentlyFailed(nid))  return actErr(400, "Locked out — try again later");
+  if (loraActionPending())  return actErr(429, "Another action in flight");
+  hackPendingId = nid;
+  loraHackStart(target, n->recon_score);
+  return actOk("Breach in progress", /*instant=*/false);
+}
+
+// ── talking ──
+ActResult actMsg(uint32_t target, const String& txt0) {
+  if (!loraReady)  return actErr(503, "Radio offline");
+  if (target == 0 || target == TRAINING_ID) return actErr(400, "Bad target");
+  KnownNode* n = findNode(target);
+  if (!n) return actErr(404, "Node not in range");
+  String txt = txt0;
+  if (txt.length() == 0)   return actErr(400, "Empty message");
+  if (txt.length() > MAIL_TEXT_MAX) txt = txt.substring(0, MAIL_TEXT_MAX);
+  if (loraActionPending()) return actErr(429, "Another action in flight");
+  strncpy(n->msg_sent, txt.c_str(), 32); n->msg_sent[32] = '\0';
+  lastSentTo = target; lastSentText = txt; lastSentAt = millis();
+  logEvent(EV_MSG_OUT, target, 0);
+  loraSendMsg(target, txt.c_str());
+  return actOk("Sending", /*instant=*/false);
+}
+
+// Mail is deliberately allowed to somebody out of earshot: it waits in a
+// pocket, or travels via whoever can hear them. Every other action requires
+// findNode() to succeed, which is the game's only proximity check.
+ActResult actMail(uint32_t target, const String& txt0) {
+  if (!loraReady)  return actErr(503, "Radio offline");
+  if (target == 0 || target == TRAINING_ID) return actErr(400, "Bad target");
+  String txt = txt0;
+  if (txt.length() == 0) return actErr(400, "Empty message");
+  if (txt.length() > MAIL_TEXT_MAX) txt = txt.substring(0, MAIL_TEXT_MAX);
+  KnownNode* direct = findNode(target);
+  uint32_t   via    = echoCarrierFor(target);
+  if (!direct && via == 0) return actErr(404, "Nobody in range can reach them");
+  if (!mailQueue(target, myChipID32, txt.c_str(), /*carried=*/false))
+    return actErr(507, "Outbox full — wait for one to be delivered");
+  logEvent(EV_MAIL_OUT, target, 0);
+  return actOk(direct ? String("Waiting for them to be in range")
+                      : String("Will travel via ") + nodeDisplayName(via), /*instant=*/false);
 }
 
 // ─────────────────────────────────────────────
@@ -2166,70 +2465,15 @@ void handleApiReveal() {
     server.send(401, "application/json", "{\"err\":\"Wrong password\"}");
     return;
   }
-  if (reconProbe.state != RECON_PROBE_READY) {
+  ReconReveal rv;
+  if (!actReconReveal(server.arg("n").toInt(), &rv)) {
     server.send(409, "application/json", "{\"err\":\"No dossier staged\"}");
     return;
   }
-  int t = server.arg("n").toInt();
-  if (t < 1)               t = 1;
-  if (t > RECON_MAX_SEQ)   t = RECON_MAX_SEQ;
-
-  uint32_t   id = reconProbe.target;
-  KnownNode* n  = findNode(id);
-  bool  training = (id == TRAINING_ID);
-
-  // The attempt is spent on the first piece of intel, not on opening the modal
-  // — a target that never answered, or a run that died in round one, costs
-  // nothing. A backdoored node costs nothing either; that is the whole prize.
-  if (!reconProbe.charged) {
-    reconProbe.charged = true;
-    if (training)                 trainRecon++;
-    else if (n && !n->pwned)    { n->recon_count++;
-                                  reconLedgerSet(id, n->recon_count); }
-  }
-
-  if (training) {
-    if (t > trainScore) trainScore = (uint8_t)t;
-  } else if (n) {
-    if (t > n->recon_score) n->recon_score = (uint8_t)t;
-    if (t > n->intel)       n->intel       = (uint8_t)t;
-    if (t >= RECON_T_BRUTE)    n->seen_brute    = reconProbe.brute;
-    if (t >= RECON_T_STEALTH)  n->seen_stealth  = reconProbe.stealth;
-    if (t >= RECON_T_FIREWALL) n->seen_firewall = reconProbe.firewall;
-    if (t >= RECON_T_PWNED) {
-      if (!n->pwned) {
-        n->pwned = true;
-        logEvent(EV_PWNED, id, 0);
-        shiftMood(+2, "left a backdoor open");
-      }
-      // Persisted, so the one thing that is meant to last actually does.
-      recordBackdoor(chipIdStr(id), reconProbe.brute, reconProbe.stealth,
-                     reconProbe.firewall);
-      saveProgress();
-    }
-  }
-
-  String j = "{\"n\":" + String(t);
-  if      (t == RECON_T_NAME)
-    j += ",\"field\":\"name\",\"label\":\"CODENAME\",\"value\":\"" +
-         jesc(training ? String("TRAINING") : nodeNameFromId(id)) + "\"";
-  else if (t == RECON_T_FACTION)
-    j += ",\"field\":\"faction\",\"label\":\"FACTION\",\"value\":\"" +
-         String(reconProbe.faction) + "\"";
-  else if (t == RECON_T_LEVEL)
-    j += ",\"field\":\"level\",\"label\":\"LEVEL\",\"value\":\"" +
-         String(reconProbe.level) + "\"";
-  else if (t == RECON_T_BRUTE)
-    j += ",\"field\":\"brute\",\"label\":\"BRUTE\",\"value\":\"" +
-         String(reconProbe.brute) + "\"";
-  else if (t == RECON_T_STEALTH)
-    j += ",\"field\":\"stealth\",\"label\":\"STEALTH\",\"value\":\"" +
-         String(reconProbe.stealth) + "\"";
-  else if (t == RECON_T_FIREWALL)
-    j += ",\"field\":\"firewall\",\"label\":\"FIREWALL\",\"value\":\"" +
-         String(reconProbe.firewall) + "\"";
-  else if (t == RECON_T_PWNED)
-    j += ",\"field\":\"pwned\",\"label\":\"BACKDOOR\",\"value\":\"OPEN\"";
+  String j = "{\"n\":" + String(rv.tier);
+  if (rv.field)
+    j += String(",\"field\":\"") + rv.field + "\",\"label\":\"" + rv.label +
+         "\",\"value\":\"" + jesc(rv.value) + "\"";
   j += "}";
   server.send(200, "application/json", j);
 }
@@ -2240,6 +2484,13 @@ static void apiFail(int code, const String& msg) {
 static void apiOk(const String& msg) {
   server.send(200, "application/json", "{\"instant\":true,\"msg\":\"" + msg + "\"}");
 }
+// Relay a shared game action's result in the shape the portal JS expects.
+static void apiReply(const ActResult& r, const char* okJson = nullptr) {
+  if (r.code != 200)   apiFail(r.code, r.msg);
+  else if (okJson)     server.send(200, "application/json", okJson);
+  else if (r.instant)  apiOk(r.msg);
+  else server.send(200, "application/json", "{\"ok\":true,\"msg\":\"" + jesc(r.msg) + "\"}");
+}
 
 // First-run only. Refuses once a character exists, so nobody on the open Wi-Fi
 // can re-roll somebody else's device.
@@ -2247,30 +2498,8 @@ void handleApiSetup() {
   String f = server.arg("f"), p = server.arg("p");
   Serial.printf("[SETUP] args=%d faction='%s' pwlen=%u method=%d\n",
                 server.args(), f.c_str(), (unsigned)p.length(), (int)server.method());
-
-  if (!(myName == "" || myFaction == "NONE")) {
-    Serial.println("[SETUP] refused — already configured");
-    apiFail(409, "Already configured — wipe the device first"); return;
-  }
-  if (f != "BLACK" && f != "WHITE" && f != "RED" && f != "GREEN") {
-    Serial.println("[SETUP] refused — faction missing or unrecognised");
-    apiFail(400, "Faction missing — did the form reach the device?"); return;
-  }
-  if (p.length() < 6) {
-    Serial.println("[SETUP] refused — password too short");
-    apiFail(400, "Password too short"); return;
-  }
-
-  myFaction  = f;
-  myPassword = p;
-  myName     = nodeNameFromId(myChipID32);
-  if      (f == "BLACK") skillBrute    += 3;
-  else if (f == "WHITE") skillFirewall += 3;
-  else if (f == "RED")   skillStealth  += 3;
-  else { skillBrute++; skillStealth++; skillFirewall++; }
-  saveProgress();
-  Serial.printf("[SETUP] configured as %s (%s) — rebooting\n",
-                myName.c_str(), myFaction.c_str());
+  ActResult r = actSetup(f, p, /*requirePassword=*/true);
+  if (r.code != 200) { apiFail(r.code, r.msg); return; }
   server.send(200, "application/json", "{\"ok\":true}");
   requestRestart(800);   // let the response flush before we drop the link
 }
@@ -2279,7 +2508,7 @@ void handleApiSetup() {
 // open by design, so without this anyone within radio range could spend your
 // skill points or wipe your character.
 void handleApiAction() {
-  if (myName == "" || myFaction == "NONE") { apiFail(409, "Not configured"); return; }
+  if (!gameConfigured()) { apiFail(409, "Not configured"); return; }
   if (server.arg("pw") != myPassword) {
     Serial.printf("[AUTH] rejected '%s' — sent %u chars, stored %u\n",
                   server.arg("a").c_str(),
@@ -2291,13 +2520,12 @@ void handleApiAction() {
 
   if (a == "beacon")     { loraSendBeacon(); apiOk("Beacon sent"); return; }
   if (a == "showqr")     {
-    // Put the join code on the e-ink so someone can point a camera at it.
+    // Put the join code on the screen so someone can point a camera at it.
     displayQr(WiFi.softAPSSID(), "Open network.", "Then 192.168.4.1");
     revertIdleAtMs = millis() + 60000;   // a full minute to get it scanned
     apiOk("QR on the display for 60s"); return;
   }
-  if (a == "clearnodes") { knownCount = 0; memset(knownNodes, 0, sizeof(knownNodes));
-                           apiOk("Node list cleared"); return; }
+  if (a == "clearnodes") { apiReply(actClearNodes()); return; }
   if (a == "reset")      { server.send(200, "application/json", "{\"instant\":true,\"msg\":\"Wiping\"}");
                            preferences.begin("cypher-v8", false); preferences.clear(); preferences.end();
                            requestRestart(800); return; }
@@ -2306,164 +2534,28 @@ void handleApiAction() {
     if (np.length() < 6) { apiFail(400, "Password too short"); return; }
     myPassword = np; saveProgress(); apiOk("Password updated"); return;
   }
-  if (a == "skill") {
-    if (skillPoints < 1) { apiFail(400, "No skill points"); return; }
-    String s = server.arg("s");
-    if      (s == "brute")    skillBrute++;
-    else if (s == "stealth")  skillStealth++;
-    else if (s == "firewall") skillFirewall++;
-    else { apiFail(400, "Unknown skill"); return; }
-    skillPoints--; saveProgress(); apiOk("Skill raised"); return;
-  }
+  if (a == "skill") { apiReply(actSkill(server.arg("s"))); return; }
 
   uint32_t target = (uint32_t)strtoul(server.arg("id").c_str(), nullptr, 16);
 
-  // ── the training dummy resolves entirely on this device ──
-  // Handled before the radio checks so the lesson works with no one else
-  // around, which is the entire point of it.
-  if (target == TRAINING_ID) {
-    if (!trainingActive()) { apiFail(400, "Training is over — you levelled up"); return; }
-
-    if (a == "recon") {
-      if (trainRecon >= 3) { apiFail(400, "Practice recon spent — try the hack"); return; }
-      // No radio, no wait: the dummy's dossier is on this device already.
-      loraReconProbeLocal(TRAINING_ID, 1, 'G',
-                          TRAIN_BRUTE, TRAIN_STEALTH, TRAIN_FIREWALL);
-      apiOk("Link up — practice target");
-      return;
-    }
-    if (a == "reconend") {
-      logEvent(EV_TRAIN, 0, 0);
-      reconProbe.state = RECON_PROBE_IDLE;
-      apiOk("Practice run logged — sequence " + String(trainScore));
-      return;
-    }
-    if (a == "hack") {
-      int pct = loraHackChancePct(skillBrute, trainScore, skillStealth, TRAIN_FIREWALL);
-      bool won = (random(0, 100) < pct);
-      HackResult r = resolveHackOutcome("GREEN", TRAIN_FIREWALL, won);
-
-      Serial.printf("[TRAIN] seq=%u odds=%d%% -> %s, XP %+d\n",
-                    trainScore, pct, r.success ? "WIN" : "LOSS", r.xpDelta);
-      logEvent(r.success ? EV_HACK_WON : EV_HACK_LOST, 0, r.xpDelta);
-      shiftMood(r.success ? +2 : -2, r.success ? "won a hack" : "lost a hack");
-
-      // Reset the round either way: practice should be repeatable, and there
-      // is no cooldown on a target that does not exist.
-      trainRecon = 0; trainScore = 0;
-
-      bool lvlUp = applyXP(r.xpDelta);
-      saveProgress();
-      if (r.success) displayHackSuccess("TRAINING", r.xpDelta, r.note);
-      else           displayHackFailed("TRAINING", abs(r.xpDelta), r.note);
-      if (lvlUp) { logEvent(EV_LEVEL, 0, 0); shiftMood(+3, "levelled up");
-                   displayLevelUp(); revertIdleAtMs = millis() + 6000; }
-      else                            revertIdleAtMs = millis() + 4000;
-
-      server.send(200, "application/json",
-                  String("{\"instant\":true,\"msg\":\"") +
-                  (r.success ? "Training breach — you are ready" : "Held off. Try again") +
-                  "\"}");
-      return;
-    }
-    apiFail(400, "Not available on the training node");
-    return;
-  }
-
-  // ── radio actions: fire and let the poll report the outcome (T3.5) ──
-  if (!loraReady) { apiFail(503, "Radio offline"); return; }
-  if (target == 0) { apiFail(400, "Bad target"); return; }
-  // Mail is deliberately handled before the in-range gate below. Every other
-  // action requires findNode() to succeed, which is the game's only proximity
-  // check; a message that waits in a pocket for its recipient is the one thing
-  // that is allowed to be addressed to somebody out of earshot.
-  if (a == "mail") {
-    String txt = server.arg("txt");
-    if (txt.length() == 0) { apiFail(400, "Empty message"); return; }
-    if (txt.length() > MAIL_TEXT_MAX) txt = txt.substring(0, MAIL_TEXT_MAX);
-    KnownNode* direct = findNode(target);
-    uint32_t   via    = echoCarrierFor(target);
-    if (!direct && via == 0) {
-      apiFail(404, "Nobody in range can reach them"); return;
-    }
-    if (!mailQueue(target, myChipID32, txt.c_str(), /*carried=*/false)) {
-      apiFail(507, "Outbox full — wait for one to be delivered"); return;
-    }
-    logEvent(EV_MAIL_OUT, target, 0);
-    String how = direct ? String("Waiting for them to be in range")
-                        : String("Will travel via ") + nodeDisplayName(via);
-    server.send(200, "application/json",
-                "{\"ok\":true,\"msg\":\"" + jesc(how) + "\"}");
-    return;
-  }
-
-  KnownNode* n = findNode(target);
-  if (!n) { apiFail(404, "Node not in range"); return; }
-  String nid0 = chipIdStr(target);
-
-  // Recon is two calls now. This one opens the link and parks the target's
-  // dossier; /api/reveal draws it down a tier at a time as rounds are cleared;
-  // "reconend" closes the run out. Splitting it this way is what lets the
-  // target come apart on screen while the player is still playing.
   if (a == "recon") {
-    // No scouting while the node is locked. The lock expiring is what hands
-    // back the three attempts, so playing during it would defeat the reset.
-    if (hackCooldownLeft(nid0) > 0) {
-      apiFail(400, "Locked out — wait for the cooldown"); return;
-    }
-    if (!n->pwned && n->recon_count >= 3)  {
-      apiFail(400, "Recon spent — hack it, or wait for the cooldown"); return;
-    }
-    if (loraActionPending())  { apiFail(429, "Another action in flight"); return; }
-
-    loraReconProbeStart(target);
-    loraSendRecon(target);
-    Serial.printf("[RECON] probing %s\n", nid0.c_str());
-    server.send(200, "application/json", "{\"ok\":true,\"probe\":true}");
+    ActResult r = actReconOpen(target);
+    apiReply(r, (r.code == 200 && !r.instant) ? "{\"ok\":true,\"probe\":true}" : nullptr);
     return;
   }
-  if (a == "reconend") {
-    int score = server.arg("score").toInt();
-    if (score < 0)             score = 0;
-    if (score > RECON_MAX_SEQ) score = RECON_MAX_SEQ;
-    Serial.printf("[RECON] %s run ended at %d (best %u, intel %u) -> +%d%% odds\n",
-                  nid0.c_str(), score, n->recon_score, n->intel,
-                  (n->recon_score * RECON_MAX_BONUS) / RECON_MAX_SEQ);
-    if (score > 0) logEvent(EV_RECON, target, score);
-    if (score > statBestSeq) statBestSeq = score;
-    if (n->pwned)  shiftMood(+1, "walked back in through a backdoor");
-    reconProbe.state = RECON_PROBE_IDLE;
-    apiOk("Recon logged — sequence " + String(score));
-    return;
-  }
+  if (a == "reconend") { apiReply(actReconEnd(target, server.arg("score").toInt())); return; }
   if (a == "hack") {
-    String nid = chipIdStr(target);
-    if (hackInFlight)         { apiFail(429, "A hack is already running"); return; }
-    // Refuse immune targets here. This used to be checked only when XP was
-    // worked out, by which point the defender had already rolled and the node
-    // had been locked for half a day for a hack worth nothing.
-    if (!canAttackFaction(n->faction)) {
-      apiFail(400, "WHITE can only attack BLACK and RED"); return;
-    }
-    if (recentlyHacked(nid))  { apiFail(400, "Already owned — locked for 12 hours"); return; }
-    if (recentlyFailed(nid))  { apiFail(400, "Locked out — try again later"); return; }
-    if (loraActionPending())  { apiFail(429, "Another action in flight"); return; }
-    hackPendingId = nid;
-    loraHackStart(target, n->recon_score);
-    server.send(200, "application/json", "{\"ok\":true}");
+    ActResult r = actHack(target);
+    apiReply(r, (r.code == 200 && !r.instant) ? "{\"ok\":true}" : nullptr);
     return;
   }
   if (a == "msg") {
-    String txt = server.arg("txt");
-    if (txt.length() == 0)   { apiFail(400, "Empty message"); return; }
-    if (loraActionPending()) { apiFail(429, "Another action in flight"); return; }
-    strncpy(n->msg_sent, txt.c_str(), 32); n->msg_sent[32] = '\0';
-    lastSentTo = target; lastSentText = txt; lastSentAt = millis();
-    logEvent(EV_MSG_OUT, target, 0);
-    loraSendMsg(target, txt.c_str());
-    server.send(200, "application/json", "{\"ok\":true}");
+    ActResult r = actMsg(target, server.arg("txt"));
+    apiReply(r, r.code == 200 ? "{\"ok\":true}" : nullptr);
     return;
   }
+  if (a == "mail") { apiReply(actMail(target, server.arg("txt"))); return; }
+  if (target == TRAINING_ID) { apiFail(400, "Not available on the training node"); return; }
   apiFail(400, "Unknown action");
 }
 
@@ -2688,7 +2780,7 @@ void serviceFactoryResetButton() {
 }
 
 #if defined(CYPHER32_TDECK)
-#include "tdeck_ui.h"
+#include "tdeck_app.h"
 #endif
 
 void setup() {
@@ -2720,6 +2812,7 @@ void setup() {
   displayPtr = new TDeckPanel();
   tdeckLoadPrefs();
   tdeckDisplayBegin();
+  tdeckCanvasBegin();          // before Wi-Fi can fragment the heap
 #else
   displayPtr = new EInkDisplay_WirelessPaperV1_2();
 #endif
@@ -2744,35 +2837,50 @@ void setup() {
 
   loraSetup();
 
-  WiFi.mode(WIFI_AP_STA);
-  updateBeacon(false);
+  if (portalEnabled()) {
+    WiFi.mode(WIFI_AP_STA);
+    updateBeacon(false);
 
-  server.on("/",            handleRoot);
-  server.on("/api/state",   HTTP_GET,  handleApiState);
-  server.on("/api/reveal",  HTTP_GET,  handleApiReveal);
-  server.on("/api/action",  HTTP_POST, handleApiAction);
-  server.on("/api/setup",   HTTP_POST, handleApiSetup);
-  server.on("/api/diag",    HTTP_GET,  handleApiDiag);
-  server.on("/api/ping",    HTTP_GET,  handleApiPing);
+    server.on("/",            handleRoot);
+    server.on("/api/state",   HTTP_GET,  handleApiState);
+    server.on("/api/reveal",  HTTP_GET,  handleApiReveal);
+    server.on("/api/action",  HTTP_POST, handleApiAction);
+    server.on("/api/setup",   HTTP_POST, handleApiSetup);
+    server.on("/api/diag",    HTTP_GET,  handleApiDiag);
+    server.on("/api/ping",    HTTP_GET,  handleApiPing);
 
-  // The probe URLs each OS uses to decide whether a network has internet.
-  // Answering with a redirect is what makes the portal pop up on its own.
-  server.on("/generate_204",         handleCaptive);  // Android
-  server.on("/gen_204",              handleCaptive);
-  server.on("/hotspot-detect.html",  handleCaptive);  // iOS / macOS
-  server.on("/library/test/success.html", handleCaptive);
-  server.on("/ncsi.txt",             handleCaptive);  // Windows
-  server.on("/connecttest.txt",      handleCaptive);
-  server.on("/fwlink",               handleCaptive);
-  server.on("/canonical.html",       handleCaptive);
-  server.onNotFound(handleCaptive);
-  server.begin();
+    // The probe URLs each OS uses to decide whether a network has internet.
+    // Answering with a redirect is what makes the portal pop up on its own.
+    server.on("/generate_204",         handleCaptive);  // Android
+    server.on("/gen_204",              handleCaptive);
+    server.on("/hotspot-detect.html",  handleCaptive);  // iOS / macOS
+    server.on("/library/test/success.html", handleCaptive);
+    server.on("/ncsi.txt",             handleCaptive);  // Windows
+    server.on("/connecttest.txt",      handleCaptive);
+    server.on("/fwlink",               handleCaptive);
+    server.on("/canonical.html",       handleCaptive);
+    server.onNotFound(handleCaptive);
+    server.begin();
 
-  // Wildcard DNS: every lookup resolves to us, so any URL the phone tries
-  // lands on the portal (T3.1).
-  dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
-  dnsServer.start(53, "*", IPAddress(192, 168, 4, 1));
-  if (MDNS.begin("cypher32")) MDNS.addService("http", "tcp", 80);
+    // Wildcard DNS: every lookup resolves to us, so any URL the phone tries
+    // lands on the portal (T3.1).
+    dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
+    dnsServer.start(53, "*", IPAddress(192, 168, 4, 1));
+    if (MDNS.begin("cypher32")) MDNS.addService("http", "tcp", 80);
+  } else {
+    // No phone portal: the radio is the only thing on air, and the Wi-Fi
+    // stack is never started, which is most of the battery it would cost.
+    WiFi.mode(WIFI_OFF);
+  }
+
+#if defined(CYPHER32_TDECK)
+  // The screen, the chime and the backlight come up before the first 22 dBm
+  // transmission rather than on top of it: together they are the biggest
+  // current spike the board makes, and a brownout reboot on a weak cell is
+  // what arms the factory reset.
+  tdeckInputBegin();
+  tdeckAppBegin();
+#endif
 
   // First beacon immediately; loraTick() follows up at ~3 s and ~8 s, then
   // settles into the adaptive cadence (T1.7 / T2.4).
@@ -2786,10 +2894,6 @@ void setup() {
   // CHANGE, not FALLING: the release edge is what decides a short press, and
   // the press edge is what times it.
   attachInterrupt(digitalPinToInterrupt(PRG_PIN), prgISR, CHANGE);
-#if defined(CYPHER32_TDECK)
-  tdeckInputBegin();
-  tdeckStripDirty = true;
-#endif
 
 }
 
@@ -2798,13 +2902,15 @@ void setup() {
 // ─────────────────────────────────────────────
 
 void loop() {
-  dnsServer.processNextRequest();
-  server.handleClient();
+  if (portalEnabled()) {
+    dnsServer.processNextRequest();
+    server.handleClient();
+  }
   loraTick();
   serviceFactoryResetButton();   // before the early return: must work even
                                  // on an unconfigured or locked-out device
 #if defined(CYPHER32_TDECK)
-  tdeckTick();                   // keyboard, trackball, status strip
+  tdeckTick();                   // the whole T-Deck interface
 #endif
 
   if (restartPending && (int32_t)(millis() - restartAtMs) >= 0) {
@@ -2844,7 +2950,12 @@ void loop() {
   // Someone new appeared, or someone scouted us. Drain both queues; the
   // discovery screen is paced naturally by revertIdleAtMs.
   uint32_t peer;
-  while (loraPopScoutedBy(&peer)) logEvent(EV_SCOUTED, peer, 0);
+  while (loraPopScoutedBy(&peer)) {
+    logEvent(EV_SCOUTED, peer, 0);
+#if defined(CYPHER32_TDECK)
+    tdeckEvtScouted(peer);
+#endif
+  }
 
   // We took somebody's mail. Worth a line in the log — being useful to the
   // network is a thing you did — but never a screen: it is not addressed to
@@ -2878,7 +2989,11 @@ void loop() {
   if (hackTimedOut && (int32_t)(millis() - hackGraceUntil) >= 0) {
     hackTimedOut = false;
     shiftMood(-1, "hack got no answer");
+#if defined(CYPHER32_TDECK)
+    tdeckEvtHackTimeout();
+#else
     displayHackFailed(hackPendingId, 0, "No response. Out of range?");
+#endif
     revertIdleAtMs = millis() + 4000;
   }
 
@@ -2894,13 +3009,14 @@ void loop() {
     logEvent(pendingHackAttackerWon ? EV_BREACHED : EV_HELD, whoId, 0);
     if (pendingHackAttackerWon) statBreached++; else statHeld++;
     saveProgress();                       // a defence is progress too
-    if (pendingHackAttackerWon) {
-      shiftMood(-1, "breached by a peer");
-      displayHackFailed(who, 0, "Breached by " + nodeDisplayName(whoId));
-    } else {
-      shiftMood(+1, "firewall held");
-      displayHackSuccess(who, 0, "Firewall held.");
-    }
+    if (pendingHackAttackerWon) shiftMood(-1, "breached by a peer");
+    else                        shiftMood(+1, "firewall held");
+#if defined(CYPHER32_TDECK)
+    tdeckEvtDefense(whoId, pendingHackAttackerWon);
+#else
+    if (pendingHackAttackerWon) displayHackFailed(who, 0, "Breached by " + nodeDisplayName(whoId));
+    else                        displayHackSuccess(who, 0, "Firewall held.");
+#endif
     revertIdleAtMs = millis() + 5000;
   }
 

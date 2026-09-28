@@ -12,7 +12,7 @@
 #define FSPI 0
 struct SPIClass {
   SPIClass(int) {}
-  void begin(int, int, int, int) {}
+  void begin(int = -1, int = -1, int = -1, int = -1) {}
 };
 
 struct Module {
@@ -41,7 +41,7 @@ public:
 
   void (*dio1Action)() = nullptr;
 
-  int begin(float, float, int, int, uint8_t, int8_t, int) { beginCalls++; return RADIOLIB_ERR_NONE; }
+  int begin(float, float, int, int, uint8_t, int8_t, int, float = 1.6f) { beginCalls++; return RADIOLIB_ERR_NONE; }
   void setDio1Action(void (*f)()) { dio1Action = f; }
   void clearDio1Action() { dio1Action = nullptr; }
   int  standby() { return RADIOLIB_ERR_NONE; }

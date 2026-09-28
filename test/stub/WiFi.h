@@ -1,6 +1,7 @@
 #pragma once
 // Host stub — the sketch only ever brings up a soft AP and asks for its SSID.
 #include <Arduino.h>
+#define WIFI_OFF    0
 #define WIFI_AP     2
 #define WIFI_STA    1
 #define WIFI_AP_STA 3

@@ -7,89 +7,163 @@ Cypher32 is a **physical hacking game** played on hardware you carry. Each devic
 No apps. No accounts. No names transmitted. Just chip IDs, stats, and outcomes.
 
 This is the **LilyGo T-Deck** edition of
-[Cypher32](https://github.com/StevenSeagalStreams/Cypher32). Same game, same
-rules, same web portal, and **the same radio protocol, byte for byte** — a
-T-Deck finds, scouts, hacks and messages Heltec Wireless Papers exactly as they
-do each other. What the T-Deck adds is a colour screen, a keyboard and a
-trackball: page through your screens with a roll of the ball, and send messages
-straight from the keyboard without getting your phone out.
+[Cypher32](https://github.com/StevenSeagalStreams/Cypher32), and on the T-Deck
+**the device is the whole game**. Its keyboard, trackball, colour screen and
+speaker replace the phone and web portal the original needs: you set up, scout,
+breach, message and level up on the device itself. Your hacker lives on the
+screen — breathing, blinking, typing, sipping coffee, stretching, staring back
+at you, dozing off when you leave it alone, and reacting to everything that
+happens to you.
+
+It plays **against every other Cypher32 device**. The radio protocol is the
+original, byte for byte, so a T-Deck finds, scouts, hacks and messages Heltec
+Wireless Papers exactly as they do each other.
 
 <table>
 <tr>
-<td width="55%"><img src="docs/img/tdeck/tdeck-idle.png" alt="The T-Deck screen: name, faction, level, battery, the hooded character, XP and skill bars, and a status strip showing the radio profile, nodes in range and the Wi-Fi name"></td>
-<td width="45%"><img src="docs/img/portal-radar.png" alt="The Radar tab: one backdoored node, one half-scouted, one on cooldown, one unidentified"></td>
+<td><img src="docs/img/tdeck/tdeck-home.png" alt="HOME: the hooded hacker avatar with glowing eyes at a laptop, a speech bubble, nodes in range, the suggested next move, XP and skill bars"></td>
+<td><img src="docs/img/tdeck/tdeck-radar.png" alt="RADAR: a faction census bar, then each node in range with signal bars, name, level, range, intel dots and hack odds"></td>
 </tr>
 <tr>
-<td align="center"><sub>The device. Everything it knows, at a glance.</sub></td>
-<td align="center"><sub>The portal. Everyone in range, and how much of them you have read.</sub></td>
+<td align="center"><sub><b>HOME</b> — your hacker, what's around, and what to do next.</sub></td>
+<td align="center"><sub><b>RADAR</b> — everyone in range, and how much of them you have read.</sub></td>
+</tr>
+<tr>
+<td><img src="docs/img/tdeck/tdeck-recon-input.png" alt="RECON: a 3x3 grid of tiles labelled W E R S D F Z X C, and the target's dossier filling in beside it"></td>
+<td><img src="docs/img/tdeck/tdeck-card-hack.png" alt="A hack result card beside the avatar"></td>
+</tr>
+<tr>
+<td align="center"><sub><b>RECON</b> — watch the sequence, repeat it on the keys. Each round strips a layer off them.</sub></td>
+<td align="center"><sub>It notices how it went.</sub></td>
 </tr>
 </table>
 
-> Every image in this README is generated from the source, not mocked up. The
-> screens are rendered by running the sketch's own drawing code into a
-> framebuffer, then (for the T-Deck shots) through the same scaler the TFT
-> uses; the portal screenshots load the same HTML the ESP32 serves.
-> `cd test && make shots` rebuilds them all.
+> Every screen in this README is rendered from the source, not mocked up: the
+> test suite runs the real firmware on a PC, plays it through the keyboard and
+> trackball, and saves what the TFT would show. `cd test && make shots`.
+
+---
+
+## Contents
+
+- [Playing on the T-Deck](#playing-on-the-t-deck) — controls and screens
+- [Playing against other Cypher32 devices](#playing-against-other-cypher32-devices)
+- [Hardware](#hardware) — what you need to buy
+- [First-time setup](#first-time-setup) — flash, power, pick a side
+- [The optional phone portal](#the-optional-phone-portal)
+- [Factions](#factions) · [Skills](#skills) · [Levelling](#levelling)
+- [How hacking works](#how-hacking-works) — recon, intel tiers, the roll
+- [LoRa protocol](#lora-protocol) — what actually goes over the air
+- [Building and testing](#building-and-testing)
+
+---
+
+## Playing on the T-Deck
+
+The bottom line of the screen always says what the keys do right now, so you
+should never need this table. It is here anyway.
+
+| Input | What it does |
+|-------|--------------|
+| Roll the trackball ◄ ► | Change tab |
+| Roll the trackball ▲ ▼ | Move the highlight |
+| Press the trackball, or <kbd>Enter</kbd> | Do the highlighted thing |
+| <kbd>Backspace</kbd> | Back / close / erase |
+| <kbd>H</kbd> <kbd>R</kbd> <kbd>I</kbd> <kbd>K</kbd> <kbd>L</kbd> <kbd>O</kbd> | Jump to HOME, RADAR, INBOX, SKILLS, LOG, OPTIONS |
+| <kbd>M</kbd> | Write a message, from anywhere |
+| <kbd>S</kbd> / <kbd>X</kbd> | Scout / hack the highlighted node (X twice: the first shows the odds) |
+| <kbd>P</kbd> | Ping the highlighted node (round-trip time) |
+| <kbd>B</kbd> | Send a beacon now |
+
+**HOME** is your hacker. The framed line is the move it thinks you should make
+next — scout the practice dummy, spend a skill point, read someone deeper, or
+breach someone whose odds you know — and <kbd>Enter</kbd> does it. <kbd>Space</kbd>
+pokes the avatar. It has opinions about that.
+
+**RADAR** lists everyone in range, loudest first: signal bars, name (or
+`UNKNOWN-xxxx` until you have scouted them), level, range, ten dots of intel,
+and the verdict — your odds, `SCOUT`, `LOCK 4h 12m`, `OWNED`, `BACKDOOR` or
+`IMMUNE`. The bar across the top is the faction census. Echoes — people only a
+neighbour can hear — are listed underneath; you can only mail them.
+<kbd>Enter</kbd> opens a node's **dossier**: everything recon has revealed, your
+attempts left, your odds, and why anything is greyed out.
+
+**RECON** is the original sequence-memory game with the original rules: tiles
+flash, you repeat them, each round adds one, one wrong tile ends the run, and
+every round you clear reveals the next layer of the target at once. The grid is
+<kbd>W</kbd> <kbd>E</kbd> <kbd>R</kbd> / <kbd>S</kbd> <kbd>D</kbd> <kbd>F</kbd> /
+<kbd>Z</kbd> <kbd>X</kbd> <kbd>C</kbd> — the keys the T-Deck prints 1–9 on — or
+roll and press the trackball. Every tile makes the same tick: a note per tile
+would make sequences easier to remember than on the phone, which would be an
+unfair edge over Wireless Paper players.
+
+**INBOX** has every message, newest first, with the route it took; <kbd>Enter</kbd>
+replies. Out of range is fine: the message goes as mail and travels with
+whoever can reach them. **SKILLS** spends points. **LOG** is your record and the
+last twenty things that happened. **OPTIONS** has the colour theme (phosphor,
+amber, ice, paper), sound, brightness, the screen timeout, the keyboard light,
+radio diagnostics, the phone portal and the factory reset.
+
+**Things happen to you, not just on a tab.** A new signal, a message, someone
+scouting you, someone trying to breach you, a hack verdict, a level-up — each
+wakes the screen, plays a sound, sets the avatar off, and (for the big ones)
+shows a card beside it. Cards never interrupt a recon run or a message you are
+typing: they wait, then come up one at a time.
+
+<table>
+<tr>
+<td><img src="docs/img/tdeck/tdeck-dossier.png" alt="A dossier: codename, faction, level, brute, stealth and firewall revealed, backdoor still locked, three recon attempts left, 70% odds, and SCOUT HACK MESSAGE PING buttons"></td>
+<td><img src="docs/img/tdeck/tdeck-card-levelup.png" alt="LEVEL UP: the avatar with arms raised in a ring of sparks beside a LEVEL UP card"></td>
+</tr>
+<tr>
+<td align="center"><sub>A dossier. Everything recon has pulled out of them, and your odds.</sub></td>
+<td align="center"><sub>Level up.</sub></td>
+</tr>
+<tr>
+<td><img src="docs/img/tdeck/tdeck-compose.png" alt="Composing a message: TO VoidHex, the text in large type, a character count"></td>
+<td><img src="docs/img/tdeck/tdeck-card-breached.png" alt="BREACHED: the avatar with X eyes and smoke beside a card saying VoidShell got through your firewall"></td>
+</tr>
+<tr>
+<td align="center"><sub>32 characters, over the air.</sub></td>
+<td align="center"><sub>Someone got in. It takes that personally.</sub></td>
+</tr>
+<tr>
+<td><img src="docs/img/tdeck/tdeck-home-amber.png" alt="HOME in the amber theme"></td>
+<td><img src="docs/img/tdeck/tdeck-home-paper.png" alt="HOME in the paper theme"></td>
+</tr>
+<tr>
+<td align="center"><sub>Amber.</sub></td>
+<td align="center"><sub>Paper, for daylight.</sub></td>
+</tr>
+</table>
+
+**Battery.** The screen dims after 30 seconds untouched and switches off after
+the timeout in OPTIONS (two minutes by default); any key wakes it, and so does
+anything that happens to you. The radio keeps listening throughout. Wi-Fi is
+off entirely unless you turn the phone portal on.
+
+**Factory reset.** OPTIONS → Factory reset, type `WIPE`. If you have forgotten
+nothing but locked yourself out somehow, there is also the hardware way: switch
+the T-Deck off and on twice quickly (two boots shorter than six seconds), then
+hold the trackball down for five seconds. The screen says what is happening at
+every step, and letting go cancels.
+
+---
 
 ## Playing against other Cypher32 devices
 
 Everything that decides whether two devices can hear each other is shared with
 upstream Cypher32 and has not been changed: frequency, spreading factor,
 bandwidth, coding rate, sync word, packet formats and the frame-signing key.
-The only radio change is which GPIO pins the SX1262 sits on.
+The only radio changes are which GPIO pins the SX1262 sits on and the voltage
+it feeds its crystal. The rules are shared too: the T-Deck's screens and the
+phone portal both call the same game actions in `cypher32.ino`, so they cannot
+disagree about what a move is allowed to do.
 
 The one rule is the same as ever: **every device in a game must run the same
 range profile** (FAST, LONG or EPIC). A T-Deck on LONG plays with a Wireless
 Paper on LONG; a T-Deck on LONG cannot hear a Wireless Paper on FAST. LONG is
 the default on both.
-
-## T-Deck controls
-
-| Input | What it does |
-|-------|--------------|
-| Roll the trackball | Previous / next page (avatar → last message → faction census) |
-| Press the trackball, or <kbd>Space</kbd> | Next page — the Wireless Paper's PRG press |
-| <kbd>M</kbd> | Write a message to someone in range (see below) |
-| <kbd>Q</kbd> | Put the Wi-Fi join QR on screen for a minute |
-| <kbd>B</kbd> | Send a beacon now |
-| <kbd>T</kbd> | Cycle the colour theme — phosphor, amber, paper, ice (remembered) |
-| <kbd>W</kbd> <kbd>W</kbd> <kbd>W</kbd>, then hold the trackball 5 s | Factory reset |
-
-**Messaging from the keyboard.** <kbd>M</kbd> opens the composer in the strip
-under the game screen. Roll the trackball to pick who, type up to 32 characters,
-then <kbd>Enter</kbd> or a trackball press sends it. <kbd>Backspace</kbd> on an
-empty line closes the composer. It does exactly what the portal's message
-button does — same packet, same log entry, same "last sent" on page 2.
-
-<table>
-<tr>
-<td><img src="docs/img/tdeck/tdeck-compose.png" alt="The composer: MSG TO NULLBYTE 2/3, the message being typed in large type, and a 22/32 character count"></td>
-<td><img src="docs/img/tdeck/tdeck-lastmsg.png" alt="Page 2 in the amber theme: the last message received and the last message sent"></td>
-</tr>
-<tr>
-<td align="center"><sub>Composer: roll to choose, type, Enter.</sub></td>
-<td align="center"><sub>Page 2, amber theme.</sub></td>
-</tr>
-</table>
-
-Recon, hacking and skill points are still played in the **web portal** on your
-phone, exactly as on the Wireless Paper — the recon mini-game is a
-touch-and-timing game that belongs on a phone screen.
-
----
-
-## Contents
-
-- [Playing against other Cypher32 devices](#playing-against-other-cypher32-devices)
-- [T-Deck controls](#t-deck-controls) — trackball, keyboard, messaging
-- [Hardware](#hardware) — what you need to buy, and how the port works
-- [First-time setup](#first-time-setup) — flash, power, join, play
-- [Web portal](#web-portal) — the command interface
-- [Factions](#factions) · [Skills](#skills) · [Levelling](#levelling)
-- [How hacking works](#how-hacking-works) — recon, intel tiers, the roll
-- [Device screens](#device-screens) — every e-ink state
-- [LoRa protocol](#lora-protocol) — what actually goes over the air
-- [Building and testing](#building-and-testing)
 
 ---
 
@@ -101,6 +175,7 @@ touch-and-timing game that belongs on a phone screen.
 | MCU | ESP32-S3 (16 MB flash, 8 MB PSRAM) |
 | Display | 320 × 240 IPS TFT (ST7789) |
 | Input | Keyboard, trackball |
+| Sound | I2S speaker (MAX98357A) |
 | Radio | SX1262 — 868 MHz EU ISM |
 | Battery | LiPo via onboard charger (JST connector; the T-Deck ships without one) |
 
@@ -111,31 +186,6 @@ same board with a GPS added and should work too, but has not been tested.
 
 **Fit the antenna before you switch it on.** Transmitting into an empty
 connector can damage the radio.
-
-### How the port works
-
-The game was written for a 250 × 122 e-ink panel, and every screen is laid out
-in those pixels. Rather than redraw forty screens, the T-Deck build keeps them
-exactly as they are: the sketch draws into a 250 × 122 one-bit canvas as it
-always has, and `tdeck_hw.h` scales it 1.28× onto the top 320 × 156 of the TFT
-— anti-aliased and tinted by the colour theme. The 84 px strip underneath is
-the T-Deck's own: radio status, the Wi-Fi name, key hints, and the message
-composer. Screens that carry the join QR are always drawn dark-on-light, since
-phone cameras will not read an inverted code; the test suite scans it in every
-theme.
-
-Unlike e-ink, a TFT redraw takes about 20 ms instead of two seconds, so the
-radio is never deaf while the screen changes.
-
-| File | What it is |
-|------|------------|
-| `tdeck_hw.h` | Pin map, power and shared-SPI bring-up, the scaled display |
-| `tdeck_ui.h` | Keyboard, trackball, status strip, message composer |
-| everything else | Cypher32, with `#if defined(CYPHER32_TDECK)` at the few points where the boards differ (pins, power rail, battery sense, display type) |
-
-The build is selected by `-DCYPHER32_TDECK`, which `platformio.ini` sets for the
-default environments. Without it the same tree still builds the original
-Heltec Wireless Paper firmware (`pio run -e heltec_long`).
 
 ---
 
@@ -197,14 +247,14 @@ is one environment per range profile; `long` is the default. The board
 definition is in `boards/lilygo_t_deck.json`.
 
 **Arduino IDE:**
-1. Install the **esp32** board package (Espressif, 2.0.x) via Boards Manager.
+1. Install the **esp32** board package (Espressif, 2.0.x or 3.x) via Boards Manager.
 2. Install these libraries via Library Manager:
    - **RadioLib** (version 7.1 or later)
    - **Adafruit GFX Library**
    - **Adafruit ST7735 and ST7789 Library**
 3. Open `cypher32.ino`. All headers must be in the same folder.
 4. Board: **ESP32S3 Dev Module**, with Flash Size **16MB**, PSRAM
-   **OPI PSRAM**, Partition Scheme **16M Flash (3MB APP/9.9MB FATFS)** or any
+   **OPI PSRAM** (required: the build stops with an error without it), Partition Scheme **16M Flash (3MB APP/9.9MB FATFS)** or any
    16 MB scheme, USB CDC On Boot **Enabled**.
 5. Click **Upload**.
 
@@ -227,133 +277,43 @@ Espressif's ESP32 core 2.0.17 and 3.2.0.
 
 ---
 
-### Step 2 — Power on
+### Step 2 — Power on and pick a side
 
-Plug in USB-C or connect a LiPo, and slide the power switch on. The screen boots, then holds on the **setup screen** — waiting for you to identify yourself.
-
-The device is already broadcasting. An open Wi-Fi network named **`Cypher32`** appears. No password. No ceremony.
-
----
-
-### Step 3 — Connect
-
-<img src="docs/img/tdeck/tdeck-setup.png" width="440" alt="The join screen: a QR code beside SCAN TO JOIN, the SSID, and 'No password. Then 192.168.4.1'">
-
-The device shows a **Wi-Fi QR code** on its screen. Point your camera at it and
-your phone offers to join — no typing an SSID. (Any time later, <kbd>Q</kbd> on
-the keyboard, or HUD → SHOW JOIN QR ON DEVICE in the portal, puts it back up for
-a minute so someone else can scan it.)
-
-Or join **`Cypher32`** manually. The portal should open by itself —
-the device runs a captive portal, so your phone's "sign in to network" prompt
-lands you straight on it.
-
-If it doesn't, open a browser and go to:
-
-```
-192.168.4.1
-```
-or `cypher32.local`
-
-A three-step setup walks you through what the game is, what each faction does,
-and setting a password.
-
----
-
-### Step 4 — Choose your faction and set a password
-
-<img src="docs/img/portal-setup.png" width="280" align="right" alt="The first-run wizard: four faction cards to choose from">
-
-The setup screen asks two things:
-
-1. **Faction** — your allegiance, your combat style, your starting advantage. Not reversible without a full wipe. Choose what fits how you fight (see [Factions](#factions)).
-2. **Password** — the device's Wi-Fi is open by design, so anyone nearby can
-   reach this page. The password is what stops them spending your skill points
-   or wiping your character. Minimum six characters.
-
-Hit **ESTABLISH UPLINK**. The device goes dark for a moment.
-
----
-
-### Step 5 — You're in
-
-The firmware derives your **hacker name** from your chip ID — deterministic and
-permanent, the same name every time this device boots. Crucially it is the
-*same* derivation every other device uses, so the name on your screen is the
-name your messages arrive under. Nothing about the name is ever transmitted.
-
-There are 576 possible names, so a collision between two devices is unlikely
-but not impossible once you have a few dozen in play.
-
-<br clear="all">
-
-The display comes alive:
-
-<img src="docs/img/tdeck/tdeck-idle.png" width="440" alt="The idle screen">
-
-- Name, faction, and level in the header
-- Your character — idle for now, watching
-- A speech bubble with something to say
-- XP bar and skill indicators along the bottom
-
-Your Wi-Fi SSID has changed to `C32_<Faction>_<Name>`. The portal is readable by
-anyone, but every action now needs your password. Your device beacons every
-12–18 seconds at first so nearby players find you quickly, settling to 25–35
-seconds once you've been discovered.
-
-> **Factory reset:** press <kbd>W</kbd> three times within three seconds, then
-> hold the **trackball** pressed for 5 seconds. The screen confirms before it
-> wipes. This needs no password — having the device in your hands is the proof
-> you own it, so it is also the way back in if you forget one.
->
-> The T-Deck has no RST button, so the Wireless Paper's "tap RST twice" becomes
-> three W presses. (Two quick power-cycles on battery arm it too, since that is
-> what the double tap looks like to the firmware.) Arming alone does nothing;
-> it lapses after 20 seconds if the trackball is not held.
-
----
-
-## Web portal
-
-Your command interface. Connect to the device's Wi-Fi and open **192.168.4.1**.
+Plug in USB-C or connect a LiPo, fit the antenna, and slide the power switch
+on. Your hacker introduces itself, tells you your codename — derived from your
+chip, so it is the same on every device that hears you — and asks you to pick a
+faction (see [Factions](#factions)). That choice is permanent until a factory
+reset. Press <kbd>Enter</kbd> to jack in; the device restarts once, and you are
+on the network.
 
 <table>
 <tr>
-<td><img src="docs/img/portal-hud.png" alt="HUD tab"></td>
-<td><img src="docs/img/portal-log.png" alt="Log tab"></td>
-<td><img src="docs/img/portal-cfg.png" alt="Config tab"></td>
-</tr>
-<tr>
-<td align="center"><sub><b>HUD</b> — who you are, what you have, whether the radio is alive</sub></td>
-<td align="center"><sub><b>Log</b> — the last 20 things that happened</sub></td>
-<td align="center"><sub><b>Config</b> — contact alert, password, the way out</sub></td>
+<td><img src="docs/img/tdeck/tdeck-setup-welcome.png" alt="Setup: the avatar beside 'You are a ghost in the machine' and your codename"></td>
+<td><img src="docs/img/tdeck/tdeck-setup-faction.png" alt="Setup: the four factions, BLACK WHITE RED GREEN, with what each does"></td>
 </tr>
 </table>
 
-| Tab | Function |
-|-----|----------|
-| **HUD** | Level, XP, skills, battery, radio status, manual beacon |
-| **Radar** | Everyone in range, sorted by signal — recon and hack from here |
-| **Skills** | Spend skill points from level-ups |
-| **Msgs** | Send and receive LoRa text — 32 chars max |
-| **Log** | The last 20 things that happened, newest first |
-| **Config** | Contact alert, password, identity, node list, factory reset, diagnostics |
+### Step 3 — Practise on the dummy
 
-The page never reloads. It polls the device twice a second, so signal strength,
-cooldown countdowns and action status update live.
+Until you reach level 2 there is a **practice dummy** on your radar that only
+exists on your device. Your hacker's suggested move will point you at it:
+scout it (the recon game), then breach it. Winning pays enough XP to level up,
+and the dummy goes away — after that, the only targets are real.
 
-**Contact alert.** When a node you have never seen before comes into range, the
-phone plays three notes — A, C, G, two detuned squares each, through a
-resonant filter and a short feedback delay. Synthesised on the page, so there
-is no audio file anywhere. The device shows a discovery on its screen for a few
-seconds and then goes back to idle, which is no use with the device in a bag;
-this is. It needs the page open and the phone awake, and some captive-portal
-mini-browsers refuse to play audio at all — open `192.168.4.1` in Chrome or
-Safari if you hear nothing. Off switch and a test button are in **Config**.
+---
 
-**Every action tells you what happened.** Press HACK and you get
-`SENDING… → WAITING FOR REPLY (2/4) → SUCCESS`, or `NO RESPONSE — out of range?`
-if the target never answered. Nothing fails silently.
+## The optional phone portal
+
+The original Cypher32 is played through a web page its device serves over its
+own Wi-Fi. The T-Deck does not need it, and leaves Wi-Fi off — it is the
+biggest drain on the battery. If you want it anyway (to show someone the game
+on a big screen, say), turn it on in **OPTIONS → Phone portal**. You set a
+password first — the network is open to anyone in range, and the password is
+what stops them spending your skill points — and the device restarts. Then join
+the Wi-Fi network `C32_<faction>_<name>` and open **192.168.4.1**.
+
+Everything in the portal and on the device is the same game state, moved by
+the same code; use either, or both.
 
 ---
 
@@ -407,7 +367,9 @@ the climb lengthens steadily from there.
 
 ## How hacking works
 
-This is what it's all for.
+This is what it's all for. (On the T-Deck: <kbd>R</kbd> for the radar,
+<kbd>S</kbd> to scout, <kbd>X</kbd> twice to breach. The rules below are the
+same whether you play on the device or through the phone portal.)
 
 **1. Find a target.**  
 Contacts appear in the **Radar** tab when their beacon reaches you, sorted by
@@ -417,7 +379,7 @@ contact is a signal, not a person.
 
 **2. Run recon.**  
 
-<img src="docs/img/portal-recon.png" width="300" align="right" alt="The recon mini-game: a 3x3 grid with one tile lit, and beneath it the intel panel with codename, faction, level and brute filled in while stealth, firewall and backdoor are still locked">
+<img src="docs/img/tdeck/tdeck-recon-done.png" width="320" align="right" alt="The recon mini-game on the T-Deck: a 3x3 grid, the target's dossier filling in beside it, and the run's result">
 
 Recon is a **sequence-memory game**, and it is how anybody becomes somebody. A
 grid of tiles flashes a pattern; repeat it. Each round adds one step. Every
@@ -657,85 +619,22 @@ there are. The full arithmetic is in `ROADMAP.md`.
 
 ---
 
-## Device screens
-
-The game screen only redraws when something happens — a hack result, an incoming message, a level-up, or a mood shift every 10 minutes. (The screens below are shown as the original e-ink panel draws them; the T-Deck shows the same pixels, scaled and in colour.)
-
-- **Header** — name, faction initial, level, battery %
-- **Character** — idle / focused / victory / defeat
-- **Speech bubble** — quips, scan status, hack outcomes
-- **Footer** — XP bar, skill bars (B / S / F)
-
-The character notices when you're losing.
-
-**Three pages.** Roll the trackball (or press it, or press <kbd>Space</kbd>) to
-move between the avatar, the last message anyone sent you, and the faction
-census. Three markers in the header rule show where you are. Holding the
-trackball does nothing — the long hold is the factory-reset confirm, and it is
-deliberately unreachable unless you armed it first.
-
-<table>
-<tr>
-<td><img src="docs/img/eink-page-lastmsg.png" alt="Page 2: the last message received, in large type, with the last message sent along the bottom"></td>
-<td><img src="docs/img/eink-page-census.png" alt="Page 3: a faction census bar chart with BLACK, WHITE, RED, GREEN and UNKNOWN"></td>
-</tr>
-<tr>
-<td align="center"><sub><b>Page 2</b> — the last thing anyone said, and the last thing you said.</sub></td>
-<td align="center"><sub><b>Page 3</b> — the room. Anyone you have not scouted to round 4 counts as UNKNOWN, never as a guess.</sub></td>
-</tr>
-</table>
-
-<table>
-<tr>
-<td><img src="docs/img/eink-newnode-unknown.png" alt="NODE DETECTED, UNKNOWN-0002, DISTANT"></td>
-<td><img src="docs/img/eink-newnode.png" alt="NODE DETECTED, VoidShell, LVL 9 WHITE"></td>
-</tr>
-<tr>
-<td align="center"><sub>Someone arrives. You do not know who yet — that is what recon is for.</sub></td>
-<td align="center"><sub>The same screen once you have read them.</sub></td>
-</tr>
-<tr>
-<td><img src="docs/img/eink-hack-win.png" alt="Hack succeeded"></td>
-<td><img src="docs/img/eink-hack-lose.png" alt="Hack failed"></td>
-</tr>
-<tr>
-<td align="center"><sub>You are in.</sub></td>
-<td align="center"><sub>You are not. Your character has opinions about it.</sub></td>
-</tr>
-<tr>
-<td><img src="docs/img/eink-message.png" alt="Incoming message"></td>
-<td><img src="docs/img/eink-levelup.png" alt="Level up"></td>
-</tr>
-<tr>
-<td align="center"><sub>32 characters, straight off the air.</sub></td>
-<td align="center"><sub>A skill point is waiting in the portal.</sub></td>
-</tr>
-<tr>
-<td><img src="docs/img/eink-armed.png" alt="Factory reset armed"></td>
-<td><img src="docs/img/eink-wiping.png" alt="Wiping"></td>
-</tr>
-<tr>
-<td align="center"><sub>Armed. Nothing has happened yet.</sub></td>
-<td align="center"><sub>Let go and it stops. Keep holding and it does not.</sub></td>
-</tr>
-</table>
-
----
-
 ## Building and testing
 
 ### File structure
 
 | File | Purpose |
 |------|---------|
-| `cypher32.ino` | Main sketch — game logic, display, portal API |
+| `cypher32.ino` | Main sketch — game logic, the shared game actions, e-ink screens, portal API |
 | `cypher32_packets.h` | Packet types, `KnownNode`, node helpers, shared key |
 | `cypher32_lora.h` | LoRa stack — link layer, retries, presence, diagnostics |
 | `cypher32_crypto.h` | SHA-256 / HMAC-SHA256 for frame signing |
 | `cypher32_portal.h` | The web portal, one HTML/CSS/JS blob in PROGMEM |
 | `cypher32_qr.h` | Minimal QR encoder for the Wi-Fi join code |
-| `tdeck_hw.h` | T-Deck pins, power, shared SPI bus, the scaled TFT display |
-| `tdeck_ui.h` | T-Deck keyboard, trackball, status strip, message composer |
+| `tdeck_hw.h` | T-Deck pins, power, shared SPI bus, TFT, backlight, keyboard, trackball |
+| `tdeck_app.h` | The T-Deck game: every screen, recon, compose, cards, notifications, power |
+| `tdeck_avatar.h` | The living avatar, drawn and animated procedurally |
+| `tdeck_sound.h` | A tiny square-wave synth on the I2S speaker, and the game's sounds |
 | `platformio.ini` | PlatformIO build config (T-Deck default, Heltec still available) |
 | `boards/lilygo_t_deck.json` | PlatformIO board definition for the T-Deck |
 | `ROADMAP.md` | Development plan and current status |
@@ -760,7 +659,7 @@ cd test && make shots    # regenerate every image in docs/img
 | `layout` | The page in real Chromium at five phone sizes — nothing off-screen, nothing unreachable |
 | `flasher` | The browser installer page in real Chromium — the profile picker, the browser gate, a blocked CDN |
 | `qr` | The encoder against `python-qrcode`, then the result decoded by OpenCV |
-| `tdeck` | The join QR pushed through the T-Deck's scaler, decoded by OpenCV in every colour theme |
+| `tdeck` | **The T-Deck edition, played on the PC**: the real sketch and app with the real Adafruit GFX, driven by scripted keys and trackball — setup, recon, hacking, skills, messages, cards, power saving (61 checks) — and every screen saved |
 
 **The firmware is compiled for the real chip in CI.** `.github/workflows/firmware.yml`
 builds all three range profiles for the T-Deck with PlatformIO on every push,
@@ -776,6 +675,16 @@ the web server and the radio. It will not catch a bad pin mapping or a linker
 script problem — that is what the CI build is for — but it catches every typo,
 every changed signature and every missing declaration in a second, without
 waiting for a toolchain.
+
+**`make tdeck` plays the T-Deck edition without a T-Deck.** `test/render_tdeck.cpp`
+includes the whole sketch with `CYPHER32_TDECK`, links the real Adafruit GFX
+library, and stubs only the TFT (a framebuffer), the keyboard (a queue of
+keypresses) and the radio. It then plays: first-run setup, three rounds of
+recon on the practice dummy read off the screen's own sequence, a deliberate
+miss, the hack, a level-up, spending a skill point, replying to a message — and
+the edge cases the reviews turned up, such as a card arriving mid-recon or
+mid-sentence, a node re-sorting under the highlight, or `millis()` passing
+2³¹. Every screen it passes through is saved as an image.
 
 **The e-ink screens are rendered, not photographed.** The same program runs the
 sketch's own `displayIdle()`, `displayNewNode()` and friends into a 250×122

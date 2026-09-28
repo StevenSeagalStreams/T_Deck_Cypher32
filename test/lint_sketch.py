@@ -27,7 +27,9 @@ PLATFORM = {
     "ESP", "Serial", "WiFi", "MDNS",   # Arduino global objects
     "CHANGE", "RISING", "FALLING",     # attachInterrupt modes
 }
-PLATFORM_PREFIXES = ("RADIOLIB_", "ESP_", "ARDUINO_", "SX126", "DNS", "MDNS", "WL_")
+PLATFORM_PREFIXES = ("RADIOLIB_", "ESP_", "ARDUINO_", "SX126", "DNS", "MDNS", "WL_",
+                     "I2S_", "WIFI_", "ST77XX_",   # ESP-IDF I2S, Wi-Fi modes, TFT
+                     "CONFIG_", "BOARD_")          # sdkconfig and board macros
 
 defined = set(PLATFORM)
 for f in sources:
@@ -43,7 +45,8 @@ for f in sources:
     for decl in re.findall(r"\bconst(?:expr)?\b[^;{}]*", text):
         defined |= set(re.findall(r"\b([A-Z][A-Z0-9_]{2,})\s*(?:=|\[)", decl))
     # enum bodies, e.g. enum Foo { A_B, C_D };
-    for body in re.findall(r"\benum\s+\w*\s*\{([^}]*)\}", text, re.S):
+    # An explicit underlying type ("enum Foo : uint8_t { ... }") is still an enum.
+    for body in re.findall(r"\benum\s+(?:class\s+)?\w*\s*(?::\s*\w+\s*)?\{([^}]*)\}", text, re.S):
         defined |= set(re.findall(r"\b([A-Z][A-Z0-9_]{2,})\b", body))
 
 # Strip the HTML blob, then literals, then comments — in that order.

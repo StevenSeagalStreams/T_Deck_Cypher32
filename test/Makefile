@@ -51,18 +51,31 @@ sketch: render_eink
 	@echo "── sketch build ──"
 	@mkdir -p out && ./render_eink out
 
-# The T-Deck's scaled screen: the join QR must survive the 1.28x scaler.
-tdeck: render_eink
+# The T-Deck edition, run on the host: the real sketch and the real T-Deck
+# app, drawing with the real Adafruit GFX library, played through scripted
+# keypresses. Checks the game still works from the device's own controls and
+# saves every screen. Needs git the first time, to fetch Adafruit GFX.
+GFX := .deps/Adafruit-GFX-Library
+$(GFX):
+	@mkdir -p .deps && git clone -q --depth 1 https://github.com/adafruit/Adafruit-GFX-Library $(GFX)
+
+render_tdeck: render_tdeck.cpp ../cypher32.ino ../cypher32_lora.h ../cypher32_packets.h \
+              ../tdeck_hw.h ../tdeck_app.h ../tdeck_avatar.h ../tdeck_sound.h \
+              stub_tdeck/Adafruit_ST7789.h stub_tdeck/Wire.h stub_tdeck/Print.h | $(GFX)
+	$(CXX) -std=c++17 -DARDUINO=10819 -I stub_tdeck -I stub -I $(GFX) -w -o $@ $< $(GFX)/Adafruit_GFX.cpp
+
+tdeck: render_tdeck
 	@echo "── tdeck ──"
-	@mkdir -p out && ./render_eink out >/dev/null && python3 test_tdeck_qr.py
+	@mkdir -p out/tdeck && ./render_tdeck out/tdeck
 
 # Regenerate every image in docs/img. Not part of `all`: it needs Chromium and
 # Pillow, and it rewrites files that are committed.
-shots: render_eink
+shots: render_eink render_tdeck
 	@mkdir -p out ../docs/img
 	@./render_eink out
 	@python3 pbm2png.py out ../docs/img
-	@python3 tdeck_preview.py out ../docs/img/tdeck
+	@mkdir -p out/tdeck ../docs/img/tdeck && ./render_tdeck out/tdeck >/dev/null
+	@python3 -c "import glob,os; from PIL import Image; [Image.open(p).save(os.path.join('../docs/img/tdeck', os.path.basename(p)[:-4] + '.png')) for p in glob.glob('out/tdeck/*.ppm')]"
 	@python3 portal/extract.py >/dev/null
 	@NODE_PATH=$${NODE_PATH:-/opt/node22/lib/node_modules} node shoot_portal.js ../docs/img
 
@@ -117,5 +130,5 @@ test_pages: test_pages.cpp ../cypher32.ino ../cypher32_lora.h ../cypher32_packet
 	$(CXX) -std=c++17 -I stub -w -o $@ $<
 
 clean:
-	rm -f $(BINS) test_qr test_qr_mask render_eink portal/portal.html portal/portal.js portal/.run.js
+	rm -f $(BINS) test_qr test_qr_mask render_eink render_tdeck portal/portal.html portal/portal.js portal/.run.js
 	rm -rf out

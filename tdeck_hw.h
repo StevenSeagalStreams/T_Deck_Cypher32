@@ -3,30 +3,20 @@
 //  LilyGo T-Deck hardware layer
 // ─────────────────────────────────────────────
 //
-//  Only compiled when CYPHER32_TDECK is defined (platformio.ini sets it).
+//  Only compiled for the T-Deck (CYPHER32_TDECK, the default for any ESP32
+//  build of this repository). Pins, power, the screen, the keyboard, the
+//  trackball and the backlight. The game's own screens live in tdeck_app.h.
 //
-//  The game was written for a 250x122 e-ink panel and every screen in
-//  cypher32.ino is laid out in those pixels. Rather than fork forty drawing
-//  functions, this file gives the sketch a drop-in replacement for the Heltec
-//  display object: the sketch draws into a 250x122 one-bit canvas exactly as it
-//  always has, and update() scales that canvas 1.28x onto the top 320x156 of
-//  the T-Deck's ST7789, anti-aliased and tinted by the current theme. The
-//  84 px strip left underneath belongs to tdeck_ui.h — radio status, key hints
-//  and the on-device message composer.
-//
-//  The radio code is untouched apart from its pin numbers, so a T-Deck and a
-//  Wireless Paper running the same range profile hear each other exactly as
-//  two Wireless Papers do.
-//
-//  PIN MAP (LilyGo T-Deck, from LilyGo's utilities.h)
+//  PIN MAP (LilyGo T-Deck; LilyGo's utilities.h and Meshtastic's variant.h)
 //    Peripheral power enable  GPIO10   — must be HIGH or nothing else works
 //    Shared SPI bus           SCK 40, MISO 38, MOSI 41
-//      TFT  ST7789 320x240    CS 12, DC 11, backlight 42
+//      TFT  ST7789 320x240    CS 12, DC 11, backlight 42 (AW9364, 16 levels)
 //      SX1262                 CS 9, BUSY 13, RST 17, DIO1 45  (packets.h)
 //      SD card                CS 39    (unused, but must be held high)
 //    I2C                      SDA 18, SCL 8
-//      Keyboard (ESP32-C3)    0x55, one byte per keypress
+//      Keyboard (ESP32-C3)    0x55, one byte per keypress; 0x01,duty = backlight
 //    Trackball                UP 3, DOWN 15, LEFT 1, RIGHT 2, CLICK 0
+//    Speaker (MAX98357A I2S)  BCK 7, WS 5, DOUT 6   (tdeck_sound.h)
 //    Battery sense            GPIO4 through a 1:2 divider
 #include <Wire.h>
 #include <SPI.h>
@@ -55,174 +45,174 @@
 #define TDECK_ROTATION    3
 #endif
 
-#define TDECK_TFT_W     320
-#define TDECK_TFT_H     240
-#define TDECK_SRC_W     250     // the e-ink layout the sketch draws in
-#define TDECK_SRC_H     122
-#define TDECK_GAME_H    156     // 122 * 320/250, rounded down
-#define TDECK_STRIP_Y   TDECK_GAME_H
-#define TDECK_STRIP_H   (TDECK_TFT_H - TDECK_GAME_H)
+#define TDECK_W         320
+#define TDECK_H         240
 
-// The sketch's colour words mean "ink" and "paper", not RGB. On the canvas a
-// set bit is ink; the theme decides what colour ink is.
+// The e-ink drawing code is still compiled (the Heltec build shares it), and
+// its colour words mean ink and paper. Nothing on the T-Deck shows it.
 #define BLACK 1
 #define WHITE 0
 
-// Defined in tdeck_ui.h, which is included further down the sketch; the page
-// button handler needs to ask it whether a press belongs to the composer.
-bool tdeckTakesClick();
+// The T-Deck has 8 MB of octal PSRAM, and the game draws into a 150 KB
+// off-screen canvas that lives there. Without it the device would boot to a
+// black screen or crash, so refuse to build rather than fail on the desk.
+// In the Arduino IDE: Tools > PSRAM > "OPI PSRAM".
+#if defined(ARDUINO_ARCH_ESP32) && !defined(TDECK_ALLOW_NO_PSRAM) && \
+    (!defined(BOARD_HAS_PSRAM) || !defined(CONFIG_SPIRAM_MODE_OCT))
+  #error "Cypher32 T-Deck needs PSRAM: in the Arduino IDE set Tools > PSRAM > OPI PSRAM"
+#endif
 
-static inline constexpr uint16_t tdeckRgb(uint8_t r, uint8_t g, uint8_t b) {
-  return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
-}
+#if !defined(ARDUINO_ARCH_ESP32)
+  // Host test build: the few core calls the stubs do not provide.
+  inline void noInterrupts() {}
+  inline void interrupts() {}
+#endif
 
-struct TDeckTheme {
-  const char* name;
-  uint8_t paper[3];
-  uint8_t ink[3];
-};
+// ── Hooks the sketch calls into the T-Deck app (tdeck_app.h) ──
+// The sketch's e-ink screens are where every game event already surfaces —
+// a hack verdict, a message, a new node — so on the T-Deck each of those
+// functions hands its event to the app instead of drawing.
+void tdeckRedraw();
+void tdeckEvtHack(bool won, const String& tid, int xp, const String& note);
+void tdeckEvtHackTimeout();
+void tdeckEvtDefense(uint32_t who, bool breached);
+void tdeckEvtMessage(const String& fromId, const String& msg);
+void tdeckEvtLevelUp();
+void tdeckEvtNewNode(uint32_t id);
+void tdeckEvtScouted(uint32_t who);
+void tdeckEvtArmed();
+void tdeckEvtWiping();
+void tdeckEvtQr();
+bool tdeckPortalEnabled();
 
-// Phosphor is the default: the character reads as a hooded figure on a dark
-// terminal, which is the whole mood of the game. Paper is the original e-ink
-// look for anyone who wants their T-Deck to match their friends' Heltecs.
-static const TDeckTheme TDECK_THEMES[] = {
-  { "PHOSPHOR", {   4,  10,   6 }, {  60, 255, 120 } },
-  { "AMBER",    {  10,   6,   0 }, { 255, 176,   0 } },
-  { "PAPER",    { 232, 230, 220 }, {  16,  16,  16 } },
-  { "ICE",      {   2,   6,  14 }, { 110, 200, 255 } },
-};
-#define TDECK_THEME_COUNT ((int)(sizeof(TDECK_THEMES) / sizeof(TDECK_THEMES[0])))
-
-// One TFT object, sharing the radio's SPI bus. Constructed in tdeckPowerOn(),
-// after the bus exists.
-Adafruit_ST7789* tft = nullptr;
-
-// Colour lookup: 33 ink levels from paper (0) to full ink (32), rebuilt when
-// the theme changes. The strip colours are picked from the same ramp so the
-// whole screen stays in one palette.
-uint16_t tdeckLut[33];
-uint16_t tdeckPaperLut[33];   // fixed dark-on-light ramp for QR frames
-uint16_t tdeckPaper = 0, tdeckInk = 0xFFFF, tdeckDim = 0x7BEF, tdeckMid = 0xBDF7;
-int      tdeckTheme = 0;
-
-static void tdeckBuildRamp(const TDeckTheme& th, uint16_t* lut) {
-  for (int i = 0; i <= 32; i++) {
-    uint8_t c[3];
-    for (int k = 0; k < 3; k++)
-      c[k] = (uint8_t)(th.paper[k] + ((int)th.ink[k] - th.paper[k]) * i / 32);
-    lut[i] = tdeckRgb(c[0], c[1], c[2]);
-  }
-}
-
-void tdeckSetTheme(int t) {
-  tdeckTheme = ((t % TDECK_THEME_COUNT) + TDECK_THEME_COUNT) % TDECK_THEME_COUNT;
-  tdeckBuildRamp(TDECK_THEMES[tdeckTheme], tdeckLut);
-  tdeckBuildRamp(TDECK_THEMES[2], tdeckPaperLut);             // PAPER
-  tdeckPaper = tdeckLut[0];
-  tdeckInk   = tdeckLut[32];
-  tdeckDim   = tdeckLut[12];
-  tdeckMid   = tdeckLut[22];
-}
-
-// ── Scaling tables ──────────────────────────
-//
-//  Each destination pixel covers 250/320 of a source pixel on each axis, so it
-//  overlaps at most two source pixels per axis. s0/s1 are those two, w0 is how
-//  much of the destination pixel s0 covers, out of 64.
-struct TDeckTap { uint8_t s0, s1, w0; };
-static TDeckTap tdeckTapX[TDECK_TFT_W];
-static TDeckTap tdeckTapY[TDECK_GAME_H];
-
-static void tdeckBuildTaps(TDeckTap* t, int S, int D) {
-  for (int d = 0; d < D; d++) {
-    int a = d * S, b = (d + 1) * S;
-    int s0 = a / D, bnd = (s0 + 1) * D;
-    int w0 = (b <= bnd) ? 64 : ((bnd - a) * 64 + S / 2) / S;
-    t[d].s0 = (uint8_t)s0;
-    t[d].s1 = (uint8_t)((s0 + 1 < S) ? s0 + 1 : S - 1);
-    t[d].w0 = (uint8_t)w0;
-  }
-}
-
-// ── The display object the sketch draws into ──
-//
-//  The same ten calls the Heltec driver answered: clearMemory, landscape,
-//  update, and the Adafruit-GFX drawing surface (which GFXcanvas1 already is).
+// The e-ink code's display object. Kept so that code compiles unchanged; it
+// is a small canvas nobody looks at, because every display* function routes
+// to the app before it draws.
 class TDeckPanel : public GFXcanvas1 {
 public:
-  TDeckPanel() : GFXcanvas1(TDECK_SRC_W, TDECK_SRC_H) {}
-  void clearMemory() { fillScreen(WHITE); paperFrame = false; }
-  void landscape()   {}               // the canvas is already landscape
-  void update();                      // push the canvas to the glass
-  uint32_t pushes = 0;
-  // Set by displayQr(): phone cameras will not read a light-on-dark QR, so a
-  // frame carrying one is shown dark-on-light whatever the theme. Lasts until
-  // the next clearMemory(), so a theme change while it is up keeps it.
-  bool paperFrame = false;
+  TDeckPanel() : GFXcanvas1(250, 122) {}
+  void clearMemory() { fillScreen(WHITE); }
+  void landscape()   {}
+  void update()      {}
 };
 
-void TDeckPanel::update() {
-  if (!tft) return;
-  pushes++;
-  const uint8_t* buf = getBuffer();
-  const int stride = (TDECK_SRC_W + 7) / 8;
-  static uint16_t line[TDECK_TFT_W];
-  const uint16_t* lut = paperFrame ? tdeckPaperLut : tdeckLut;
+Adafruit_ST7789* tft = nullptr;
 
-  tft->startWrite();
-  tft->setAddrWindow(0, 0, TDECK_TFT_W, TDECK_GAME_H);
-  for (int dy = 0; dy < TDECK_GAME_H; dy++) {
-    const TDeckTap& ty = tdeckTapY[dy];
-    const uint8_t* r0 = buf + ty.s0 * stride;
-    const uint8_t* r1 = buf + ty.s1 * stride;
-    int wy0 = ty.w0, wy1 = 64 - ty.w0;
-    for (int dx = 0; dx < TDECK_TFT_W; dx++) {
-      const TDeckTap& tx = tdeckTapX[dx];
-      int wx0 = tx.w0, wx1 = 64 - tx.w0;
-      uint8_t m0 = 0x80 >> (tx.s0 & 7), m1 = 0x80 >> (tx.s1 & 7);
-      int b0 = tx.s0 >> 3, b1 = tx.s1 >> 3;
-      int v = 0;                                      // 0..4096
-      if (r0[b0] & m0) v += wx0 * wy0;
-      if (r0[b1] & m1) v += wx1 * wy0;
-      if (r1[b0] & m0) v += wx0 * wy1;
-      if (r1[b1] & m1) v += wx1 * wy1;
-      // >>7 gives 0..32; the 3/2 gain pulls thin strokes back up to full ink
-      // so 6x8 text stays crisp instead of turning grey at 1.28x.
-      v = ((v >> 7) * 3) >> 1;
-      if (v > 32) v = 32;
-      line[dx] = lut[v];
-    }
-    tft->writePixels(line, TDECK_TFT_W);
+// ── Backlight ───────────────────────────────
+//  The AW9364 counts pulses: HIGH = level 16 (brightest), each LOW→HIGH blip
+//  steps one level down (wrapping), LOW for 3 ms = off. From LilyGo's UnitTest.
+uint8_t tdeckBlLevel = 0;
+void tdeckBacklight(uint8_t v) {                       // 0 (off) .. 16
+  const uint8_t steps = 16;
+  if (v > steps) v = steps;
+  if (v == tdeckBlLevel) return;
+  if (!v) { digitalWrite(TDECK_TFT_BL, LOW); delay(3); tdeckBlLevel = 0; return; }
+  if (!tdeckBlLevel) { digitalWrite(TDECK_TFT_BL, HIGH); tdeckBlLevel = steps; delayMicroseconds(30); }
+  int num = (steps + (steps - v) - (steps - tdeckBlLevel)) % steps;
+  // The AW9364 needs each low and high to last at least ~0.5 us; back-to-back
+  // digitalWrite()s can be shorter than that, and a missed pulse leaves the
+  // level wrong until the next off.
+  for (int i = 0; i < num; i++) {
+    digitalWrite(TDECK_TFT_BL, LOW);  delayMicroseconds(1);
+    digitalWrite(TDECK_TFT_BL, HIGH); delayMicroseconds(1);
   }
-  tft->endWrite();
+  tdeckBlLevel = v;
 }
 
 // ── Power and bus bring-up ──────────────────
-//
-//  Order matters. GPIO10 powers the TFT, radio, keyboard and SD slot; every
-//  chip select on the shared bus has to be high before anything talks on it,
-//  or the SD card answers commands meant for the radio. The bus is begun here
-//  with the T-Deck's pins so that the radio's own loraSPI.begin() later finds
-//  it already running and leaves it alone — SPIClass::begin() returns early
-//  once initialised, which is what lets the two drivers share it.
+//  GPIO10 powers the TFT, radio, keyboard and SD slot; every chip select on
+//  the shared bus has to be high before anything talks on it, or the SD card
+//  answers commands meant for the radio. The bus is begun here with the
+//  T-Deck's pins so the radio's own loraSPI.begin() later finds it running
+//  and leaves it alone — which is what lets the two drivers share it.
 void tdeckPowerOn() {
   pinMode(TDECK_POWERON, OUTPUT);
   digitalWrite(TDECK_POWERON, HIGH);
   const int cs[] = { TDECK_SD_CS, LORA_NSS, TDECK_TFT_CS };
   for (int p : cs) { pinMode(p, OUTPUT); digitalWrite(p, HIGH); }
   pinMode(TDECK_TFT_BL, OUTPUT);
-  digitalWrite(TDECK_TFT_BL, LOW);          // dark until the first frame
+  digitalWrite(TDECK_TFT_BL, LOW);                    // dark until the first frame
   loraSPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI);
 }
 
 void tdeckDisplayBegin() {
-  tdeckBuildTaps(tdeckTapX, TDECK_SRC_W, TDECK_TFT_W);
-  tdeckBuildTaps(tdeckTapY, TDECK_SRC_H, TDECK_GAME_H);
-  tdeckSetTheme(tdeckTheme);
   if (!tft) tft = new Adafruit_ST7789(&loraSPI, TDECK_TFT_CS, TDECK_TFT_DC, -1);
   tft->init(240, 320);
   tft->setSPISpeed(40000000);
-  tft->setRotation(TDECK_ROTATION);         // landscape, keyboard at the bottom
-  tft->fillScreen(tdeckPaper);
-  digitalWrite(TDECK_TFT_BL, HIGH);
+  tft->setRotation(TDECK_ROTATION);
+  tft->fillScreen(0x0000);
+}
+
+// Screen power: the backlight is most of the draw, the panel's own sleep
+// the rest. Waking takes ~120 ms (the controller's SLPOUT delay).
+//
+// The ST7789 needs 120 ms between SLPIN and SLPOUT (either way round) and
+// 5 ms after SLPOUT before the next command; Adafruit's enableSleep() does
+// not wait, so it is done here. The backlight comes back last, via the
+// caller, after a fresh frame is on the glass.
+bool     tdeckScreenOn = true;
+uint32_t tdeckScreenAt = 0;                            // last SLPIN/SLPOUT
+void tdeckScreenPower(bool on) {
+  if (!tft || on == tdeckScreenOn) return;
+  uint32_t since = millis() - tdeckScreenAt;
+  if (tdeckScreenAt && since < 120) delay(120 - since);
+  if (on) { tft->enableSleep(false); delay(5); tft->enableDisplay(true); }
+  else    { tdeckBacklight(0); tft->enableDisplay(false); tft->enableSleep(true); }
+  tdeckScreenAt = millis();
+  tdeckScreenOn = on;
+}
+
+// ── Keyboard ────────────────────────────────
+//  The keyboard's own ESP32-C3 hands over one byte per keypress, 0 when idle
+//  (Enter 0x0D, Backspace 0x08; Sym + W E R / S D F / Z X C gives 1-9). It
+//  keeps only the last key, so it is polled often.
+bool     tdeckKbPresent = true;
+uint32_t tdeckKbLastPoll = 0;
+uint8_t  tdeckKbMisses = 0;
+
+char tdeckReadKey() {
+  uint32_t gap = tdeckKbPresent ? 15 : 1000;
+  if ((uint32_t)(millis() - tdeckKbLastPoll) < gap) return 0;
+  tdeckKbLastPoll = millis();
+  // One NACK is a hiccup; three in a row is a keyboard that is not there,
+  // and it is then polled once a second instead.
+  if (Wire.requestFrom((uint8_t)TDECK_KB_ADDR, (uint8_t)1) != 1) {
+    if (tdeckKbMisses < 3 && ++tdeckKbMisses >= 3) tdeckKbPresent = false;
+    return 0;
+  }
+  tdeckKbMisses = 0;
+  tdeckKbPresent = true;
+  int c = Wire.read();
+  return c < 0 ? 0 : (char)c;
+}
+
+// Keyboard backlight: supported by the C3 firmware LilyGo ships since late
+// 2024. Older keyboards ignore it (Alt+B still toggles it locally).
+void tdeckKbBacklight(uint8_t duty) {
+  Wire.beginTransmission(TDECK_KB_ADDR);
+  Wire.write(0x01); Wire.write(duty);
+  Wire.endTransmission();
+}
+
+// ── Trackball ───────────────────────────────
+//  Each direction is a hall sensor that pulses as the ball turns. The ISRs
+//  only count; the app turns counts into steps.
+volatile int16_t tdeckTbX = 0, tdeckTbY = 0;
+void IRAM_ATTR tdeckTbUp()    { tdeckTbY = tdeckTbY - 1; }
+void IRAM_ATTR tdeckTbDown()  { tdeckTbY = tdeckTbY + 1; }
+void IRAM_ATTR tdeckTbLeft()  { tdeckTbX = tdeckTbX - 1; }
+void IRAM_ATTR tdeckTbRight() { tdeckTbX = tdeckTbX + 1; }
+
+void tdeckInputBegin() {
+  Wire.begin(TDECK_I2C_SDA, TDECK_I2C_SCL);
+  const int pins[] = { TDECK_TB_UP, TDECK_TB_DOWN, TDECK_TB_LEFT, TDECK_TB_RIGHT };
+  for (int p : pins) pinMode(p, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(TDECK_TB_UP),    tdeckTbUp,    FALLING);
+  attachInterrupt(digitalPinToInterrupt(TDECK_TB_DOWN),  tdeckTbDown,  FALLING);
+  attachInterrupt(digitalPinToInterrupt(TDECK_TB_LEFT),  tdeckTbLeft,  FALLING);
+  attachInterrupt(digitalPinToInterrupt(TDECK_TB_RIGHT), tdeckTbRight, FALLING);
+  Wire.requestFrom((uint8_t)TDECK_KB_ADDR, (uint8_t)1);
+  tdeckKbPresent = Wire.available() > 0;
+  while (Wire.available()) Wire.read();
+  Serial.printf("[TDECK] keyboard %s\n", tdeckKbPresent ? "found" : "not answering");
 }

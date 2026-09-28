@@ -39,7 +39,7 @@ jobs:
       - name: Lint, unit tests, every range profile
         working-directory: test
         run: make lint && make run && make profiles
-      - name: T-Deck join QR scans through the TFT scaler
+      - name: T-Deck app played through its own controls
         working-directory: test
         run: make tdeck
       - name: Flasher page
