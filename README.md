@@ -208,6 +208,16 @@ definition is in `boards/lilygo_t_deck.json`.
    16 MB scheme, USB CDC On Boot **Enabled**.
 5. Click **Upload**.
 
+When the upload finishes, the IDE may report *"A serial exception error
+occurred: Cannot configure port"* just after **Hard resetting**. That is
+harmless: the T-Deck has no USB-serial chip, so when it reboots into the new
+firmware its USB port disappears and comes back, and the uploader loses it. If
+the log says **Hash of data verified** for every part, the upload worked.
+
+Watch the sketch size line: *"Maximum is 1310720 bytes"* means the 16 MB
+partition scheme is not selected (that is the 4 MB default), and the next
+feature added will not fit.
+
 The sketch builds for the T-Deck by default; no flag is needed. (To build the
 original Heltec Wireless Paper firmware from this tree, add
 `#define CYPHER32_HELTEC` as the first line of `cypher32.ino`.) Tested with

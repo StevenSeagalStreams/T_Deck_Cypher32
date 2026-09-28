@@ -48,6 +48,13 @@
 #define TDECK_SD_CS      39
 #define TDECK_BAT_ADC     4
 
+// Adafruit's ST7789 rotation 1 puts the image upside down on the T-Deck (its
+// MADCTL for 1 differs from TFT_eSPI's, which LilyGo's examples use); 3 is the
+// right way up with the keyboard below the screen. Confirmed on hardware.
+#ifndef TDECK_ROTATION
+#define TDECK_ROTATION    3
+#endif
+
 #define TDECK_TFT_W     320
 #define TDECK_TFT_H     240
 #define TDECK_SRC_W     250     // the e-ink layout the sketch draws in
@@ -215,7 +222,7 @@ void tdeckDisplayBegin() {
   if (!tft) tft = new Adafruit_ST7789(&loraSPI, TDECK_TFT_CS, TDECK_TFT_DC, -1);
   tft->init(240, 320);
   tft->setSPISpeed(40000000);
-  tft->setRotation(1);                      // landscape, keyboard at the bottom
+  tft->setRotation(TDECK_ROTATION);         // landscape, keyboard at the bottom
   tft->fillScreen(tdeckPaper);
   digitalWrite(TDECK_TFT_BL, HIGH);
 }
