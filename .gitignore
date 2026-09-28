@@ -1,0 +1,15 @@
+test/test_link
+test/test_twonode
+test/portal/portal.html
+test/portal/portal.js
+test/portal/.run.js
+*.o
+test/test_qr
+test/test_qr_mask
+test/render_eink
+test/out/
+test/__pycache__/
+test/test_pages
+test/test_mesh
+.pio/
+site/

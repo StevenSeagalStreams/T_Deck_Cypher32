@@ -1,0 +1,1228 @@
+#pragma once
+#include <Arduino.h>
+
+// ─────────────────────────────────────────────
+//  CYPHER32 PORTAL — single page            Phase 3
+// ─────────────────────────────────────────────
+//
+//  One HTML/CSS/JS blob served from PROGMEM. All state comes from
+//  GET /api/state (polled), all mutations go through POST /api/action.
+//  Nothing reloads the page, so no request has to regenerate 20 KB of markup
+//  while the radio is waiting to be serviced.
+//
+//  Design rules (T3.3):
+//    - mobile first, works one-handed at 360 px
+//    - bottom tab bar, 44 px minimum tap targets
+//    - dark terminal aesthetic, but real contrast so it reads in daylight
+//    - every action shows SENDING -> WAITING -> SUCCESS / NO RESPONSE (T3.5)
+
+static const char PORTAL_HTML[] PROGMEM = R"PORTAL(<!DOCTYPE html><html lang="en">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Cypher32</title><style>
+/* touch-action:manipulation everywhere kills double-tap-to-zoom detection, and
+   with it the 300 ms the browser otherwise waits before firing click. Pinch
+   zoom still works; only the tap delay goes. */
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+/* viewport-fit=cover lets the tab bar reach into the home-indicator strip, but
+   it also lets the top of the page slide under the phone's status bar. Pay the
+   top inset back here or the header sits behind the clock. */
+body{margin:0;background:#05080a;color:#c8f5c8;font:14px/1.45 ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+ padding-top:env(safe-area-inset-top);
+ padding-bottom:calc(64px + env(safe-area-inset-bottom))}
+h1,h2,h3{margin:0 0 8px;font-weight:600;letter-spacing:.5px}
+a{color:#5fe08a}
+.wrap{padding:14px;max-width:640px;margin:0 auto}
+.card{background:#0b1114;border:1px solid #1d2f26;border-radius:10px;padding:14px;margin-bottom:12px}
+.ct{font-size:11px;letter-spacing:1.4px;color:#6fbf8a;text-transform:uppercase;margin-bottom:10px}
+.row{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.mut{color:#7a927f}.sm{font-size:12px}.xs{font-size:11px}
+.big{font-size:26px;font-weight:700;color:#7dffa8;line-height:1.1}
+button,.btn{display:block;width:100%;min-height:44px;padding:11px 14px;background:#123020;color:#8dffb4;
+ border:1px solid #2f6b47;border-radius:8px;font:inherit;font-weight:600;cursor:pointer;text-align:center}
+button:active{background:#1b4a30}
+button[disabled]{opacity:.4;cursor:not-allowed}
+.btn.ghost{background:transparent;color:#8dffb4}
+.btn.danger{background:transparent;color:#ff8080;border-color:#8a3030}
+.btn.inline{display:inline-block;width:auto;min-height:38px;padding:8px 14px;font-size:12px;margin:0}
+input,select,textarea{width:100%;min-height:44px;padding:10px;background:#05090b;color:#c8f5c8;
+ border:1px solid #24402f;border-radius:8px;font:inherit;margin-top:6px}
+textarea{min-height:64px;resize:none}
+.bar{height:7px;background:#0d1a12;border:1px solid #23402e;border-radius:4px;overflow:hidden}
+.bf{height:100%;background:linear-gradient(90deg,#2f9e5c,#7dffa8)}
+.tabs{position:fixed;left:0;right:0;bottom:0;display:flex;background:#080d10;border-top:1px solid #1d2f26;
+ padding-bottom:env(safe-area-inset-bottom);z-index:50}
+.tab{flex:1;min-height:60px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+ gap:3px;color:#5c7a66;font-size:10px;letter-spacing:.6px;cursor:pointer;border:none;background:none;border-radius:0}
+.tab .ic{font-size:17px;line-height:1}
+.tab.on{color:#7dffa8;box-shadow:inset 0 2px 0 #7dffa8}
+.pill{display:inline-block;font-size:10px;padding:2px 8px;border-radius:99px;border:1px solid;letter-spacing:.6px}
+.fB{color:#7ab0ff;border-color:#3a6bb5}.fW{color:#dfe9f5;border-color:#8fa3b8}
+.fR{color:#ff8b8b;border-color:#b54545}.fG{color:#84e6a0;border-color:#3f9159}
+.node{border:1px solid #1d2f26;border-radius:10px;padding:12px;margin-bottom:10px;background:#0a1013}
+.node.fade{opacity:.5}
+.bars{display:inline-flex;align-items:flex-end;gap:2px;height:14px;vertical-align:-2px}
+.bars i{width:4px;background:#24402f;border-radius:1px}
+.bars i.on{background:#7dffa8}
+.bars i:nth-child(1){height:4px}.bars i:nth-child(2){height:7px}
+.bars i:nth-child(3){height:10px}.bars i:nth-child(4){height:14px}
+.pips{letter-spacing:3px;color:#7dffa8}
+/* Standings and census. The bar is a track plus a fill, the same idiom the
+   device's own skill bars use, so the two screens read as one thing. */
+.lb{display:flex;align-items:baseline;gap:8px;padding:5px 0;border-bottom:1px solid #12201a;font-size:13px}
+.lb:last-of-type{border-bottom:0}
+.lb.me{color:#b6ffcf;font-weight:600}
+.lb .r{color:#4d7a5f;min-width:20px;font-size:11px}
+.lb .n{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lb .v{color:#7dffa8;font-variant-numeric:tabular-nums}
+.lb.un .n,.lb.un .v{color:#5c7a66}
+.cen{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12px}
+.cen .k{min-width:58px;color:#8fa79a;letter-spacing:.5px}
+.cen .t{flex:1;height:12px;background:#0d1a12;border:1px solid #23402e;border-radius:3px;overflow:hidden}
+/* display:block or the width is ignored — a span is inline, and an inline
+   box takes its width from its content, which here is nothing at all. */
+.viab{display:inline-block;padding:1px 5px;margin-left:4px;border-radius:4px;
+  border:1px dashed #2c3a4d;color:#7fd1a8;font-size:10px;letter-spacing:.04em}
+.echo{border:1px dashed #2c3a4d;border-radius:10px;padding:10px 12px;
+  margin-bottom:8px;background:rgba(255,255,255,.015);opacity:.82}
+.echo b{font-weight:600;color:#9fb3c8}
+.cen .f{display:block;height:100%;background:#2f9e5c}
+.cen .c{min-width:20px;text-align:right;color:#b6ffcf;font-variant-numeric:tabular-nums}
+.cen.fB .f{background:#3a6bb5}.cen.fW .f{background:#8fa3b8}
+.cen.fR .f{background:#b54545}.cen.fG .f{background:#3f9159}
+.cen.fq .f{background:#33413a}
+/* Sticky and in the flow, not floating over the page. It used to be
+   position:fixed, which parked it on top of whatever was at the top of the
+   tab — usually your own name and level — and there was no way to read what
+   was underneath. In flow it pushes the page down instead, and being sticky it
+   still follows you as you scroll. display:none costs no height, so a page
+   with nothing to say looks exactly as it did. */
+.banner{position:sticky;top:env(safe-area-inset-top);z-index:100;padding:12px 14px;
+ font-size:13px;font-weight:600;display:none;border-bottom:1px solid;box-shadow:0 6px 18px #000a}
+.banner.go{display:block;background:#0d2418;color:#8dffb4;border-color:#2f6b47}
+.banner.bad{display:block;background:#2a1010;color:#ffb0b0;border-color:#8a3030}
+.banner.wait{display:block;background:#0f1c2a;color:#a8d4ff;border-color:#2f4f6b}
+.hide{display:none!important}
+.grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+.stat{background:#0a1013;border:1px solid #1d2f26;border-radius:8px;padding:10px;text-align:center}
+.stat b{display:block;font-size:19px;color:#7dffa8}
+.kv{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #12201a;font-size:12px}
+.kv:last-child{border:none}
+.msg{padding:9px 0;border-bottom:1px solid #12201a}
+.msg:last-child{border:none}
+.dot{width:8px;height:8px;border-radius:50%;background:#7dffa8;display:inline-block;vertical-align:1px}
+.dot.off{background:#3a4a40}
+.fc{border:1px solid #24402f;border-radius:10px;padding:12px;margin-bottom:10px;cursor:pointer;background:#0a1013}
+.fc.sel{border-color:#7dffa8;background:#0f2418}
+.step{display:none}.step.on{display:block}
+/* margin:auto on the child, not align-items:center on the parent. Centring a
+   flex child that is taller than its container pushes the overflow off BOTH
+   ends and makes the top unscrollable — which is why the recon game could not
+   be seen whole on anything smaller than a large phone without zooming out.
+   With auto margins it centres when it fits and scrolls when it does not. */
+.modal{position:fixed;inset:0;background:#000c;z-index:200;display:flex;
+ justify-content:center;padding:12px;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.modal .card{max-width:380px;width:100%;margin:auto;padding:12px}
+/* Tied to the viewport height, so the board shrinks on a short phone rather
+   than pushing the intel panel off the bottom. 40vh keeps the tiles above 68px
+   even on a 568px screen, which is still half again the 44px tap minimum. */
+.seq{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px auto;
+ max-width:min(300px,40vh)}
+/* No transition in the resting state: a tile must light on the very frame the
+   finger lands, with no 80 ms ramp in front of it. The ease is only on the way
+   back out, added with .fade at the moment the light is released. */
+.seq div{aspect-ratio:1;border:1px solid #24402f;border-radius:10px;background:#0a1013;
+ cursor:pointer;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+.seq div.lit{background:#7dffa8;border-color:#7dffa8}
+.seq div.bad{background:#ff8080;border-color:#ff8080}
+.seq div.fade{transition:background .14s linear,border-color .14s linear}
+.seq.locked div{cursor:default}
+.seqbtns{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.seqbtns button{margin:0}
+.seqhead{display:flex;justify-content:space-between;align-items:baseline}
+.seqhead b{font-size:22px;color:#7dffa8}
+/* The dossier. Rows sit locked and dim with the round that buys them, then
+   snap to full contrast the instant that round lands. */
+.ir{display:flex;justify-content:space-between;align-items:baseline;gap:8px;
+ padding:2px 0;border-bottom:1px solid #16261d;font-size:12px;line-height:1.35}
+.ir:last-child{border-bottom:0}
+.ir .k{color:#4d7a5f;letter-spacing:1px;font-size:11px;text-transform:uppercase}
+.ir .v{color:#2f4a3a;font-variant-numeric:tabular-nums}
+.ir .n{color:#2f4a3a;font-size:10px;min-width:18px;text-align:right}
+.ir.got .k{color:#6fbf8a}
+.ir.got .v{color:#b6ffcf;font-weight:600}
+.ir.got .n{color:#4d7a5f}
+.ir.new .v{animation:pop .5s ease-out}
+@keyframes pop{0%{color:#fff;transform:translateX(-6px)}100%{color:#b6ffcf;transform:none}}
+</style></head><body>
+<div id="banner" class="banner"></div>
+
+<!-- Password entry. A real field, not prompt(): the captive-portal browser
+     that opens this page silently ignores prompt/alert/confirm. -->
+<div id="pwmodal" class="modal hide">
+  <div class="card">
+    <div class="ct">Device password</div>
+    <p class="xs mut">Needed for anything that changes the device.</p>
+    <input type="password" id="pwin" placeholder="Password" autocomplete="current-password">
+    <div class="xs" id="pwerr" style="color:#ff9a9a;min-height:15px;margin-top:4px"></div>
+    <button onclick="savePw()">UNLOCK</button>
+    <button class="btn ghost" onclick="closePw()">Cancel</button>
+    <p class="xs mut" style="margin-bottom:0">Forgotten it? On the device: tap
+    <b>RST</b> twice, then hold <b>PRG</b> for 5 seconds to wipe and start over.</p>
+  </div>
+</div>
+
+<!-- Recon mini-game: sequence memory. Watch, then repeat. Every round you
+     clear strips another layer off the target, live, while you play. -->
+<div id="seqmodal" class="modal hide">
+  <div class="card">
+    <div class="seqhead"><div class="ct" style="margin:0">Recon &mdash; <span id="seqtarget">?</span></div>
+      <b id="seqlen">0</b></div>
+    <div class="xs mut" id="seqmsg">Watch the sequence, then repeat it.</div>
+    <div class="seq" id="seqgrid"></div>
+    <div class="ct" style="margin:14px 0 6px">Intel recovered</div>
+    <div id="intel"></div>
+    <div class="xs mut" id="seqfoot">Each round you clear strips off another
+    layer. A perfect <b id="seqmax">10</b> leaves a backdoor open: their file
+    stops expiring and keeps itself up to date. Three attempts per node.</div>
+    <div class="seqbtns">
+      <button id="seqbtn" onclick="seqBegin()">START</button>
+      <button class="btn ghost" onclick="seqQuit()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ SETUP WIZARD (T3.6) ══ -->
+<div id="setup" class="wrap hide">
+  <h1>CYPHER32</h1>
+
+  <div class="step on" id="s1">
+    <div class="card">
+      <div class="ct">What this is</div>
+      <p class="sm">Cypher32 is a hacking game played on real hardware. Your device
+      finds other players over long-range radio — no internet, no accounts.</p>
+      <p class="sm">You scout other players, attempt hacks, and earn XP. Everything
+      is controlled from this page.</p>
+      <button onclick="step(2)">BEGIN</button>
+    </div>
+  </div>
+
+  <div class="step" id="s2">
+    <div class="card">
+      <div class="ct">Choose your faction</div>
+      <p class="xs mut">This sets how you fight. It cannot be changed without wiping
+      the device, so pick the one that matches how you want to play.</p>
+      <div class="fc" data-f="BLACK" onclick="pick(this)">
+        <div class="row"><b>BLACK HAT</b><span class="pill fB">+3 BRUTE</span></div>
+        <div class="xs mut">Hits hardest. +20% XP on every win — but a loss costs the
+        full 15 XP with no reduction.</div></div>
+      <div class="fc" data-f="WHITE" onclick="pick(this)">
+        <div class="row"><b>WHITE HAT</b><span class="pill fW">+3 FIREWALL</span></div>
+        <div class="xs mut">Defensive. Losses cost half — but you may only attack
+        BLACK and RED, so you get fewer targets.</div></div>
+      <div class="fc" data-f="RED" onclick="pick(this)">
+        <div class="row"><b>RED HAT</b><span class="pill fR">+3 STEALTH</span></div>
+        <div class="xs mut">A gambler. +25% XP against GREEN — but a 15% chance to
+        lose XP even when you win.</div></div>
+      <div class="fc" data-f="GREEN" onclick="pick(this)">
+        <div class="row"><b>GREEN HAT</b><span class="pill fG">+1 ALL</span></div>
+        <div class="xs mut">Balanced start. +10% XP against BLACK, but a 25% risk of
+        losing XP when attacking WHITE.</div></div>
+      <button id="s2next" disabled onclick="step(3)">CONTINUE</button>
+    </div>
+  </div>
+
+  <div class="step" id="s3">
+    <div class="card">
+      <div class="ct">Set a password</div>
+      <p class="xs mut">Your device broadcasts an open Wi-Fi network, so anyone
+      nearby can open this page. The password stops them changing anything.</p>
+      <input type="password" id="p1" placeholder="Password (min 6 characters)" autocomplete="new-password">
+      <input type="password" id="p2" placeholder="Confirm password" autocomplete="new-password">
+      <div class="xs" id="pwmsg" style="color:#ff9a9a;min-height:16px;margin-top:6px"></div>
+      <p class="xs mut">Chosen faction: <b id="fsel">—</b>. This is permanent.</p>
+      <button onclick="finish()">ESTABLISH UPLINK</button>
+      <button class="btn ghost" onclick="step(2)">Back</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MAIN ══ -->
+<div id="app" class="hide">
+  <div class="wrap">
+
+    <!-- HUD -->
+    <div id="t-hud" class="pane">
+      <div class="card">
+        <div class="row">
+          <div><div class="big" id="hname">—</div>
+            <div class="sm mut">LVL <span id="hlvl">1</span> ·
+              <span id="hfac" class="pill">—</span></div></div>
+          <div style="text-align:right"><div class="sm" id="hbat">—</div>
+            <div class="xs mut"><span class="dot" id="hdot"></span>
+              <span id="hlora">—</span></div></div>
+        </div>
+        <div style="margin-top:12px">
+          <div class="row xs mut"><span>XP</span><span id="hxp">0 / 0</span></div>
+          <div class="bar" style="margin-top:4px"><div class="bf" id="hxpbar" style="width:0"></div></div>
+        </div>
+      </div>
+      <div class="grid">
+        <div class="stat"><b id="hbr">0</b><span class="xs mut">BRUTE</span></div>
+        <div class="stat"><b id="hst">0</b><span class="xs mut">STEALTH</span></div>
+        <div class="stat"><b id="hfw">0</b><span class="xs mut">FIREWALL</span></div>
+      </div>
+      <div class="card">
+        <div class="ct">Standings</div>
+        <div id="board"></div>
+        <p class="xs mut" id="boardnote" style="margin-bottom:0"></p>
+      </div>
+      <div class="card">
+        <div class="ct">Faction census</div>
+        <div id="census"></div>
+        <p class="xs mut" id="censusnote" style="margin-bottom:0"></p>
+      </div>
+      <div class="card">
+        <div class="ct">Your record</div>
+        <div class="kv"><span class="mut">Hacks landed</span><span id="rwon">0</span></div>
+        <div class="kv"><span class="mut">Hacks bounced</span><span id="rlost">0</span></div>
+        <div class="kv"><span class="mut">Firewall held</span><span id="rheld">0</span></div>
+        <div class="kv"><span class="mut">Breached by others</span><span id="rbrch">0</span></div>
+        <div class="kv"><span class="mut">Contacts met</span><span id="rmet">0</span></div>
+        <div class="kv"><span class="mut">Best recon run</span><span id="rseq">0</span></div>
+        <p class="xs mut" style="margin-bottom:0">Counted by this device, from
+        what it saw itself. Survives a reboot, and keeps counting past LVL 32.</p>
+      </div>
+      <div class="card">
+        <div class="ct">Network</div>
+        <div class="kv"><span class="mut">Nodes in range</span><span id="hnodes">0</span></div>
+        <div class="kv"><span class="mut">Signal</span><span id="hrssi">—</span></div>
+        <div class="kv"><span class="mut">Airtime used</span><span id="hduty">—</span></div>
+        <button class="btn ghost" onclick="act('beacon')">SEND BEACON</button>
+        <button class="btn ghost" onclick="act('showqr')">SHOW JOIN QR ON DEVICE</button>
+        <p class="xs mut">Puts a Wi-Fi QR on the e-ink for 60 seconds. Someone
+        can point a camera at it instead of hunting for your SSID.</p>
+      </div>
+    </div>
+
+    <!-- RADAR (T3.4) -->
+    <div id="t-radar" class="pane hide">
+      <div class="row" style="margin-bottom:10px">
+        <h3 style="margin:0">RADAR</h3><span class="xs mut" id="rcount">—</span>
+      </div>
+      <div id="nodelist"></div>
+      <div class="row hide" id="echohdr" style="margin:16px 0 10px">
+        <h3 style="margin:0;font-size:13px;opacity:.75">ECHOES</h3>
+        <span class="xs mut" id="ecount">&mdash;</span>
+      </div>
+      <div id="echolist"></div>
+      <div class="card hide" id="nonodes">
+        <div class="ct">Nothing in range</div>
+        <p class="sm mut">Your device is listening. Other players appear here
+        automatically when their beacon reaches you — usually within 15 seconds
+        of them coming into range.</p>
+      </div>
+    </div>
+
+    <!-- SKILLS -->
+    <div id="t-skills" class="pane hide">
+      <div class="card">
+        <div class="ct">Skill points</div>
+        <div class="row"><span class="sm mut">Available</span><span class="big" id="ksp">0</span></div>
+        <p class="xs mut">You earn one point per level. Maximum 35 per skill.</p>
+      </div>
+      <div class="card"><div class="row"><b>BRUTE FORCE</b><span id="kbr">0</span></div>
+        <p class="xs mut">+2% hit chance per point over the target's Firewall &mdash; big swings against soft targets.</p>
+        <button class="sk" data-s="brute" onclick="act('skill',{s:'brute'})">+1 BRUTE</button></div>
+      <div class="card"><div class="row"><b>STEALTH</b><span id="kst">0</span></div>
+        <p class="xs mut">+1% hit chance per point. Unlike Brute Force, a target's Firewall cannot cancel it.</p>
+        <button class="sk" data-s="stealth" onclick="act('skill',{s:'stealth'})">+1 STEALTH</button></div>
+      <div class="card"><div class="row"><b>FIREWALL</b><span id="kfw">0</span></div>
+        <p class="xs mut">Cuts the XP you lose when someone hacks you.</p>
+        <button class="sk" data-s="firewall" onclick="act('skill',{s:'firewall'})">+1 FIREWALL</button></div>
+    </div>
+
+    <!-- MESSAGES -->
+    <div id="t-msgs" class="pane hide">
+      <div class="card">
+        <div class="ct">Send a message</div>
+        <select id="mto"></select>
+        <textarea id="mtxt" maxlength="32" placeholder="Max 32 characters"></textarea>
+        <div class="xs mut" id="mcount">0 / 32</div>
+        <button onclick="sendMsg()">TRANSMIT</button>
+        <p class="xs mut" style="margin-top:8px">Someone listed as
+        <b>via</b> is out of your range. That message is handed to the
+        neighbour who can hear them and delivered when they next meet &mdash;
+        it travels in somebody's pocket, not over the air.</p></div>
+      <div class="card"><div class="ct">Courier bag</div>
+        <div class="xs mut" id="mailstat">Nothing waiting</div>
+      </div>
+      <div class="card"><div class="row"><div class="ct">Inbox</div>
+        <span class="xs mut" id="mcount2"></span></div>
+        <div id="inbox"></div>
+        <p class="xs mut" style="margin-top:8px">The last ten messages anyone
+        sent you. One marked <span class="viab">via</span> was carried to you
+        by that player rather than arriving over the air directly.</p></div>
+    </div>
+
+    <!-- EVENT LOG -->
+    <div id="t-log" class="pane hide">
+      <div class="row" style="margin-bottom:10px">
+        <h3 style="margin:0">EVENT LOG</h3><span class="xs mut" id="lcount">—</span>
+      </div>
+      <div class="card"><div id="loglist"></div></div>
+      <p class="xs mut">The last 20 things that happened. Kept in memory only,
+      so it clears when the device restarts.</p>
+    </div>
+
+    <!-- SETTINGS -->
+    <div id="t-cfg" class="pane hide">
+      <div class="card">
+        <div class="ct">Identity</div>
+        <div class="kv"><span class="mut">Name</span><span id="cname">—</span></div>
+        <div class="kv"><span class="mut">Faction</span><span id="cfac">—</span></div>
+        <div class="kv"><span class="mut">Chip ID</span><span id="cid">—</span></div>
+        <div class="kv"><span class="mut">Firmware</span><span id="cver">—</span></div>
+      </div>
+      <div class="card">
+        <div class="ct">Password</div>
+        <div class="kv"><span class="mut">This browser</span><span id="pwstate">—</span></div>
+        <p class="xs mut">Enter the device password once and this browser keeps it.</p>
+        <input type="password" id="curpw" placeholder="Device password" autocomplete="current-password">
+        <button class="btn ghost" onclick="unlockFromCfg()">SAVE PASSWORD</button>
+      </div>
+      <div class="card">
+        <div class="ct">Change password</div>
+        <input type="password" id="npw" placeholder="New password (min 6)">
+        <button class="btn ghost" onclick="changePw()">UPDATE PASSWORD</button>
+      </div>
+      <div class="card">
+        <div class="ct">Contact alert</div>
+        <p class="xs mut">Three notes from this phone when a node you have never
+        seen before comes into range. The screen on the device only says so for
+        a few seconds; this does not need you to be looking at it.</p>
+        <button class="btn ghost" id="sfxbtn" onclick="sfxToggle()">ALERT: ON</button>
+        <button class="btn ghost" onclick="sfxTest()">HEAR IT</button>
+        <p class="xs mut">Needs this page open and the phone awake. Some
+        captive-portal browsers refuse to play audio at all &mdash; if you hear
+        nothing, open <b>192.168.4.1</b> in Chrome or Safari instead.</p>
+      </div>
+      <div class="card">
+        <div class="ct">Maintenance</div>
+        <button class="btn ghost" onclick="act('clearnodes')">CLEAR NODE LIST</button>
+        <button class="btn ghost" onclick="showDiag()">DIAGNOSTICS</button>
+        <button class="btn danger" id="wipebtn" onclick="wipe()">FACTORY RESET</button>
+        <p class="xs mut">Factory reset erases your character permanently.</p>
+        <p class="xs mut">Locked out or forgot the password? Do it on the device:
+        <b>tap RST twice quickly, then hold PRG for 5 seconds.</b> The screen
+        will confirm before it wipes. That works without the password &mdash;
+        holding the button <i>is</i> the proof you own it.</p>
+      </div>
+    </div>
+
+    <!-- DIAGNOSTICS (T3.7) -->
+    <div id="t-diag" class="pane hide">
+      <div class="row" style="margin-bottom:10px"><h3 style="margin:0">DIAGNOSTICS</h3>
+        <button class="btn inline ghost" onclick="tab('cfg')">Close</button></div>
+      <div class="card"><div class="ct">Link</div><div id="diagbody" class="xs"></div></div>
+      <div class="card"><div class="ct">Ping a node</div>
+        <select id="pingto"></select>
+        <button class="btn ghost" onclick="doPing()">PING</button>
+        <div class="xs" id="pingout" style="margin-top:8px"></div></div>
+    </div>
+  </div>
+
+  <nav class="tabs">
+    <button class="tab on" data-t="hud"   onclick="tab('hud')"><span class="ic">▣</span>HUD</button>
+    <button class="tab"    data-t="radar" onclick="tab('radar')"><span class="ic">◎</span>RADAR</button>
+    <button class="tab"    data-t="skills"onclick="tab('skills')"><span class="ic">▲</span>SKILL</button>
+    <button class="tab"    data-t="msgs"  onclick="tab('msgs')"><span class="ic">✉</span>MSGS</button>
+    <button class="tab"    data-t="log"   onclick="tab('log')"><span class="ic">≡</span>LOG</button>
+    <button class="tab"    data-t="cfg"   onclick="tab('cfg')"><span class="ic">⚙</span>CFG</button>
+  </nav>
+</div>
+
+<script>
+var S={},cur="hud",faction="",lastAction="",busy=false;
+function $(i){return document.getElementById(i)}
+function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){
+  return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
+
+// ── password ──
+// Held in a variable first and mirrored to localStorage. The captive-portal
+// webview may have storage disabled or throw on access, so every use is
+// guarded and the in-memory copy is what actually matters for this session.
+var pwCache="";
+function lsGet(k){try{return localStorage.getItem(k)}catch(e){return null}}
+function lsSet(k,v){try{localStorage.setItem(k,v)}catch(e){}}
+function lsDel(k){try{localStorage.removeItem(k)}catch(e){}}
+function pw(){return pwCache||lsGet("c32pw")||""}
+function setPw(v){pwCache=v;lsSet("c32pw",v)}
+function forgetPw(){pwCache="";lsDel("c32pw")}
+
+function needPw(msg){
+  $("pwin").value="";
+  $("pwerr").textContent=msg||"";
+  $("pwmodal").className="modal";
+  setTimeout(function(){try{$("pwin").focus()}catch(e){}},60)}
+function closePw(){$("pwmodal").className="modal hide"}
+function savePw(){
+  var v=$("pwin").value;
+  if(!v){$("pwerr").textContent="Enter the password.";return}
+  setPw(v);closePw();banner("Password saved","go")}
+function unlockFromCfg(){
+  var v=$("curpw").value;
+  if(!v){banner("Enter the password first","bad");return}
+  setPw(v);$("curpw").value="";banner("Password saved","go");render()}
+
+function banner(msg,kind,hold){
+  var b=$("banner");b.className="banner "+kind;b.textContent=msg;
+  clearTimeout(b._t);if(hold!==true)b._t=setTimeout(function(){b.className="banner"},3200)}
+
+function tab(t){cur=t;
+  ["hud","radar","skills","msgs","log","cfg","diag"].forEach(function(x){
+    var e=$("t-"+x);if(e)e.className="pane"+(x===t?"":" hide")});
+  Array.prototype.forEach.call(document.querySelectorAll(".tab"),function(b){
+    b.className="tab"+(b.dataset.t===t?" on":"")});
+  if(t==="diag")loadDiag()}
+
+// ── setup wizard ──
+function step(n){["s1","s2","s3"].forEach(function(s,i){
+  $(s).className="step"+(i===n-1?" on":"")})}
+function pick(el){Array.prototype.forEach.call(document.querySelectorAll(".fc"),function(c){
+  c.className="fc"});el.className="fc sel";faction=el.dataset.f;
+  $("s2next").disabled=false;$("fsel").textContent=faction}
+function finish(){
+  var a=$("p1").value,b=$("p2").value;
+  if(a.length<6){$("pwmsg").textContent="Password must be at least 6 characters.";return}
+  if(a!==b){$("pwmsg").textContent="Passwords do not match.";return}
+  if(!faction){$("pwmsg").textContent="Pick a faction first.";return}
+  $("pwmsg").textContent="";
+  setPw(a);
+  banner("Configuring device…","wait",true);
+  post("/api/setup",{f:faction,p:a}).then(function(r){
+    // The device rejects bad input with an err field. Saying "configured"
+    // regardless — as this used to — hides the reason and drops you back at
+    // the start of the wizard with no idea why.
+    if(r&&r.err){$("pwmsg").textContent=r.err;banner(r.err,"bad");return}
+    awaitReboot();
+  }).catch(function(e){
+    // The device reboots as it replies, so a dropped connection here is the
+    // expected outcome, not a failure. Confirm by asking it, don't assume.
+    awaitReboot();
+  })}
+
+// Poll until the device comes back up and reports itself configured. Replaces
+// a blind 6-second reload that could not tell success from failure.
+function awaitReboot(){
+  banner("Device rebooting…","wait",true);
+  var tries=0;
+  var iv=setInterval(function(){
+    tries++;
+    if(tries>30){clearInterval(iv);
+      banner("Device did not come back. Check its screen, then reload.","bad");
+      return}
+    fetch("/api/state",{cache:"no-store"}).then(function(r){return r.json()})
+      .then(function(j){
+        if(j&&j.configured){
+          clearInterval(iv);
+          banner("Ready — "+j.name,"go");
+          setTimeout(function(){location.reload()},800)}
+      }).catch(function(){/* still down, keep waiting */})
+  },1000)}
+
+// ── transport ──
+function post(url,data){
+  var body=Object.keys(data).map(function(k){
+    return encodeURIComponent(k)+"="+encodeURIComponent(data[k])}).join("&");
+  return fetch(url,{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:body})
+    .then(function(r){
+      if(r.status===401){forgetPw();var e=new Error("Wrong password");e.code=401;throw e}
+      return r.json().catch(function(){return{}})})}
+
+// Every action reports SENDING -> WAITING -> SUCCESS / NO RESPONSE (T3.5).
+function act(what,extra){
+  if(busy)return;
+  if(!pw()){needPw("Enter the device password to continue.");return}
+  var d=extra||{};d.a=what;d.pw=pw();
+  busy=true;lastAction=what;
+  banner("SENDING…","wait",true);
+  post("/api/action",d).then(function(r){
+    busy=false;
+    if(r&&r.err){banner(r.err,"bad");return}
+    if(r&&r.instant){banner(r.msg||"Done","go");refresh();return}
+    banner("WAITING FOR REPLY…","wait",true);   // poll picks it up from here
+    refresh()
+  }).catch(function(e){busy=false;
+    if(e.code===401){needPw("That password was not accepted. Try again.");return}
+    banner(e.message||"Failed","bad")})}
+
+var echoNodes=[];
+function isEcho(id){for(var i=0;i<echoNodes.length;i++)if(echoNodes[i].id===id)return true;return false}
+// A node we can hear takes a direct message; one we only know by rumour takes
+// mail. Same box, same 32 characters, different journey.
+function sendMsg(){var t=$("mtxt").value.trim();if(!t)return;
+  var id=$("mto").value;if(!id)return;
+  act(isEcho(id)?"mail":"msg",{id:id,txt:t});
+  $("mtxt").value="";$("mcount").textContent="0 / 32"}
+function mailTo(id){tab("msgs");var e=$("mto");e.value=id;$("mtxt").focus()}
+function changePw(){var p=$("npw").value;
+  if(p.length<6){banner("Password must be at least 6 characters","bad");return}
+  if(!pw()){needPw("Enter the current password first.");return}
+  post("/api/action",{a:"setpw",np:p,pw:pw()}).then(function(r){
+    if(r&&r.err){banner(r.err,"bad");return}
+    setPw(p);$("npw").value="";banner("Password updated","go")})
+   .catch(function(e){
+    if(e.code===401){needPw("Current password was not accepted.");return}
+    banner(e.message||"Failed","bad")})}
+var wipeArmed=false;
+function wipe(){
+  var b=$("wipebtn");
+  if(!wipeArmed){
+    wipeArmed=true;b.textContent="TAP AGAIN TO ERASE EVERYTHING";
+    setTimeout(function(){wipeArmed=false;b.textContent="FACTORY RESET"},5000);
+    return}
+  wipeArmed=false;b.textContent="FACTORY RESET";
+  act("reset")}
+
+// ── recon mini-game (sequence memory) ──
+//
+// Round n flashes n tiles; repeat them to advance. The furthest round you
+// complete is the score, and it is sent with the recon action. Deliberately
+// forgiving on the first rounds and unforgiving after: one wrong tile ends it,
+// which is what makes a long run worth something.
+var seqTarget="",seqOrder=[],seqAt=0,seqBest=0,seqPlaying=false,seqAccepting=false;
+var SEQ_MAX=10,seqNode={},seqClosed=false,seqRun=0;
+
+// A tile has to answer the finger, not the network and not the next repaint
+// after it. Three things were costing up to a second between press and light:
+//
+//   1. click fires on release, and only after the browser has ruled out a
+//      double-tap. pointerdown fires on contact. That is most of the gap.
+//   2. the 2 s /api/state poll kept running underneath the game, so a tap could
+//      land behind a JSON parse and a full re-render of every tab.
+//   3. an 80 ms CSS transition sat in front of the light coming on.
+//
+// Bind on pointerdown, fall back to touchstart/mousedown on old WebViews, and
+// swallow the synthetic click that follows so one press is never two taps.
+function seqBind(d,k){
+  var touched=0;
+  function hit(e){
+    var t=(e&&e.timeStamp)||0,ty=(e&&e.type)||"";
+    // Only the fallback path can double-report: a touchstart is followed by a
+    // compatibility mousedown. Suppress that one, and nothing else — a real
+    // second press on the same tile arrives as the same event type and must
+    // always count, however fast it comes.
+    if(ty==="mousedown"&&touched&&t-touched<700)return;
+    if(ty==="touchstart")touched=t;
+    if(e&&e.cancelable&&e.preventDefault)e.preventDefault();
+    seqTap(k);
+  }
+  if(typeof PointerEvent!=="undefined"){
+    d.addEventListener("pointerdown",hit);
+  }else{
+    d.addEventListener("touchstart",hit,{passive:false});
+    d.addEventListener("mousedown",hit);
+  }
+  d.addEventListener("click",function(e){if(e&&e.preventDefault)e.preventDefault()});
+}
+
+// ── the dossier ──
+// Which round buys which field. The device owns the same table; this copy only
+// decides what the panel looks like before anything has been earned.
+var TIERS=[[2,"name","CODENAME"],[4,"faction","FACTION"],[6,"level","LEVEL"],
+           [7,"brute","BRUTE"],[8,"stealth","STEALTH"],[9,"firewall","FIREWALL"],
+           [10,"pwned","BACKDOOR"]];
+var FACNAME={B:"BLACK",W:"WHITE",R:"RED",G:"GREEN"};
+
+function intelDraw(){
+  $("intel").innerHTML=TIERS.map(function(t){
+    return '<div class="ir" id="ir_'+t[1]+'"><span class="k">'+t[2]+'</span>'+
+           '<span class="v" id="iv_'+t[1]+'">&mdash;</span>'+
+           '<span class="n">'+t[0]+'</span></div>'}).join("");
+}
+// One field, the moment the round that paid for it lands.
+function intelSet(field,value){
+  var row=$("ir_"+field),val=$("iv_"+field);
+  if(!row||!val)return;
+  val.textContent=field==="faction"?(FACNAME[value]||value):value;
+  row.className="ir got new";
+  setTimeout(function(){if(row.className.indexOf("got")>=0)row.className="ir got"},600);
+}
+// Pre-fill whatever we already knew about this target from an earlier run, so
+// the panel opens showing the ground already taken rather than seven blanks.
+function intelSeed(n){
+  intelDraw();
+  var have=n.intel||0;
+  if(have>=2&&n.name&&n.name.indexOf("UNKNOWN")!==0) intelSet("name",n.name);
+  if(have>=4&&n.faction&&n.faction!=="?")            intelSet("faction",n.faction);
+  if(have>=6&&n.level)                               intelSet("level",n.level);
+  if(n.brute>=0)                                     intelSet("brute",n.brute);
+  if(n.stealth>=0)                                   intelSet("stealth",n.stealth);
+  if(n.firewall>=0)                                  intelSet("firewall",n.firewall);
+  if(n.pwned)                                        intelSet("pwned","OPEN");
+}
+
+// The radar owns the node objects; the button only carries an index. Passing
+// the whole record through an onclick attribute meant escaping a name that is
+// now sometimes "UNKNOWN-3f2a" and sometimes a codename, for no benefit.
+var radarNodes=[];
+function seqFromRadar(i){
+  var n=radarNodes[i]; if(!n)return;
+  seqOpen(n.id,n.name,n.reconMax||10,n);
+}
+
+function seqOpen(id,name,max,node){
+  seqTarget=id; SEQ_MAX=max||10; seqNode=node||{}; seqClosed=false; seqRun++;
+  seqOrder=[];seqAt=0;seqBest=0;seqPlaying=false;seqAccepting=false;
+  pollStop();                       // nothing else may touch the DOM mid-game
+  $("seqtarget").textContent=name;
+  $("seqmax").textContent=String(SEQ_MAX);
+  $("seqlen").textContent="0";
+  $("seqbtn").textContent="START";$("seqbtn").disabled=true;
+  var g=$("seqgrid");g.className="seq locked";g.innerHTML="";
+  seqTimers={};
+  for(var i=0;i<9;i++){
+    var d=document.createElement("div");
+    d.dataset.i=String(i);
+    seqBind(d,i);
+    g.appendChild(d);
+  }
+  intelSeed(seqNode);
+  $("seqfoot").className="xs mut";
+  $("seqmodal").className="modal";
+  // Open the link first. The target's file has to be in hand before the game
+  // starts, or the reveals could not land round by round — and if nobody
+  // answers, better to say so than to charge the player thirty seconds of
+  // memory game for nothing.
+  $("seqmsg").textContent="Establishing link…";
+  post("/api/action",{a:"recon",id:id,pw:pw()}).then(function(r){
+    if(r&&r.err){seqLinkFailed(r.err);return}
+    seqAwaitProbe(0,seqRun);
+  }).catch(function(e){
+    if(e.code===401){seqQuit();needPw("Enter the device password to continue.");return}
+    seqLinkFailed(e.message||"Link failed")});
+}
+function seqLinkFailed(why){
+  $("seqmsg").textContent=why;
+  $("seqbtn").textContent="NO LINK";$("seqbtn").disabled=true;
+}
+// Poll only until the dossier is staged. This runs before the first tap, so
+// the cost of a render here is invisible; once the game starts, nothing polls.
+// Stamped with the run it belongs to. Cancelling and immediately re-opening
+// used to leave the first loop alive underneath the second, and two of these
+// racing on one dossier reveal every tier twice.
+function seqAwaitProbe(tries,run){
+  if(run!==seqRun)return;                                    // superseded
+  if($("seqmodal").className.indexOf("hide")>=0)return;      // cancelled
+  // The firmware reports how long it is prepared to wait for a target, and
+  // that figure moves with the range profile — a fixed 40 tries (10 s) was
+  // shorter than the radio's own timeout at anything past SF7, so the browser
+  // gave up on probes that were still perfectly alive. Poll a little past it.
+  var capMs=((S&&S.probeMs)||9000)+3000;
+  if(tries>Math.ceil(capMs/250)){seqLinkFailed("No response — out of range?");return}
+  fetch("/api/state",{cache:"no-store"}).then(function(r){return r.json()})
+    .then(function(j){
+      S=j;
+      var p=j.probe||{};
+      if(p.state==="ready"){
+        $("seqmsg").textContent=seqNode.pwned
+          ? "Backdoor still open. Pulling their file…"
+          : "Link up. Watch the sequence, then repeat it.";
+        $("seqbtn").disabled=false;
+        // You already own this one. No game, no attempt spent — walk in.
+        if(seqNode.pwned) seqBackdoor();
+        return;
+      }
+      if(p.state==="failed"){seqLinkFailed("No response — out of range?");return}
+      setTimeout(function(){seqAwaitProbe(tries+1,run)},250);
+    }).catch(function(){setTimeout(function(){seqAwaitProbe(tries+1,run)},400)})
+}
+// The perfect-run payoff: every tier, straight away, for free.
+function seqBackdoor(){
+  seqPlaying=true;$("seqbtn").disabled=true;$("seqbtn").textContent="RE-ENTERING…";
+  var i=0;
+  (function next(){
+    if(i>=TIERS.length){seqBest=SEQ_MAX;seqDone("Backdoor still open.");return}
+    seqReveal(TIERS[i++][0]);
+    setTimeout(next,220);
+  })();
+}
+// Every exit goes through here exactly once, so the run is always closed out
+// on the device — and only ever closed out once.
+function seqClose(){
+  seqPlaying=false;seqAccepting=false;
+  $("seqmodal").className="modal hide";
+  pollStart();
+  if(seqClosed||!seqTarget)return;
+  seqClosed=true;
+  var id=seqTarget,score=seqBest;seqTarget="";
+  post("/api/action",{a:"reconend",id:id,score:score,pw:pw()})
+    .then(refresh).catch(function(){refresh()});
+}
+function seqQuit(){seqClose()}
+
+function seqTiles(){return $("seqgrid").children}
+var seqTimers={};
+function seqFlash(i,cls,ms){
+  var t=seqTiles()[i]; if(!t)return;
+  // Per-tile timers: two quick taps on the same tile used to have the first
+  // one's timeout blank the second one's light, which reads as a missed press.
+  if(seqTimers[i])clearTimeout(seqTimers[i]);
+  t.className=cls||"lit";
+  seqTimers[i]=setTimeout(function(){
+    t.className="fade";
+    seqTimers[i]=setTimeout(function(){t.className="";delete seqTimers[i]},160);
+  },ms||300);
+}
+
+function seqBegin(){
+  if(seqPlaying)return;
+  seqPlaying=true;$("seqbtn").disabled=true;
+  // The rules paragraph is for deciding whether to play, not for while you are
+  // playing — and on a short phone it is the difference between the dossier
+  // fitting on screen and not.
+  $("seqfoot").className="xs mut hide";
+  seqOrder=[];seqBest=0;
+  seqNextRound();
+}
+function seqNextRound(){
+  seqAccepting=false;
+  seqOrder.push(Math.floor(Math.random()*9));
+  $("seqlen").textContent=String(seqOrder.length);
+  $("seqmsg").textContent="Watch…";
+  $("seqgrid").className="seq locked";
+  var i=0;
+  var iv=setInterval(function(){
+    if(i>=seqOrder.length){
+      clearInterval(iv);
+      seqAccepting=true;seqAt=0;
+      $("seqgrid").className="seq";
+      $("seqmsg").textContent="Your turn — repeat it.";
+      return;
+    }
+    seqFlash(seqOrder[i],"lit",320);
+    i++;
+  },520);
+}
+function seqTap(i){
+  if(!seqAccepting)return;
+  if(i!==seqOrder[seqAt]){ seqFail(i); return; }
+  seqFlash(i,"lit",110);            // your own press only needs a blink back
+  seqAt++;
+  if(seqAt>=seqOrder.length){
+    seqAccepting=false;
+    seqBest=seqOrder.length;
+    // Fired on the tap that finishes the round, not after the pause. The
+    // request is in the air while the "next round" beat plays out, so the row
+    // fills in as the player is still looking at the tile they just hit.
+    seqReveal(seqBest);
+    if(seqBest>=SEQ_MAX){ seqDone("Perfect run."); return; }
+    $("seqmsg").textContent="Correct — next round.";
+    setTimeout(seqNextRound,450);
+  }
+}
+
+// Ask the device for the one tier this round bought. Tiers that unlock nothing
+// come back as a bare number and simply do not paint — the table lives on the
+// device, and this stays dumb about it on purpose.
+function seqReveal(n){
+  return fetch("/api/reveal?n="+n+"&pw="+encodeURIComponent(pw()),{cache:"no-store"})
+    .then(function(r){return r.json()})
+    .then(function(d){if(d&&d.field)intelSet(d.field,d.value)})
+    .catch(function(){})
+}
+function seqFail(i){
+  seqAccepting=false;seqPlaying=false;
+  seqFlash(i,"bad",500);
+  seqDone("Wrong tile.");
+}
+function seqDone(why){
+  seqPlaying=false;seqAccepting=false;
+  $("seqgrid").className="seq locked";
+  var bonus=Math.floor(seqBest*15/SEQ_MAX);
+  var next=TIERS.filter(function(t){return t[0]>seqBest})[0];
+  $("seqmsg").textContent=why+" Sequence "+seqBest+" — +"+bonus+"% hack odds."+
+    (next?"  Round "+next[0]+" was their "+next[2].toLowerCase()+".":"");
+  $("seqbtn").textContent=seqBest>=SEQ_MAX?"BACKDOOR OPEN":"CLOSING…";
+  $("seqbtn").disabled=true;
+  // Long enough to read the last row that landed. Everything is already
+  // committed on the device — this pause is for the player, not the data.
+  // Stamped with the run it belongs to: a stale timer must never reach in and
+  // close a game the player has since started against someone else.
+  var run=seqRun;
+  setTimeout(function(){if(run===seqRun)seqClose()},seqBest>=SEQ_MAX?2600:1800);
+}
+
+// ── contact alert ──
+//
+// A new node shows on the e-ink for a few seconds and then it is gone, which
+// is no use at all if the device is in a bag. The phone is the thing you are
+// actually holding, so the phone is what makes the noise.
+//
+// Synthesised, not sampled: a wav would cost more PROGMEM than the whole
+// mini-game, and the strict CSP on this page means nothing can be fetched.
+// Two detuned squares per note through a resonant lowpass that opens as the
+// note hits, all of it into a short feedback delay — which is most of what
+// made a 1987 computer sound like a computer.
+var actx=null,sfxBusNode=null,sfxOn=lsGet("sfx")!=="0";
+var sfxLast="",sfxCount=0;               // what last played, for the tests
+
+function sfxCtx(){
+  if(actx)return actx;
+  try{
+    var C=(typeof AudioContext!=="undefined")?AudioContext:
+          (typeof webkitAudioContext!=="undefined")?webkitAudioContext:null;
+    if(C)actx=new C();
+  }catch(e){actx=null}
+  return actx;
+}
+// Browsers will not let a page make noise until the user has touched it. The
+// context is created and resumed on the first press anywhere, so by the time a
+// node appears it is already awake.
+function sfxUnlock(){
+  var a=sfxCtx();
+  if(a&&a.state==="suspended"&&a.resume)a.resume();
+}
+function sfxBus(){
+  var a=sfxCtx(); if(!a)return null;
+  if(sfxBusNode)return sfxBusNode;
+  sfxBusNode=a.createGain(); sfxBusNode.gain.value=0.45;
+  var d=a.createDelay(0.5); d.delayTime.value=0.115;
+  var fb=a.createGain(); fb.gain.value=0.3;      // <1, or it never decays
+  var wet=a.createGain(); wet.gain.value=0.4;
+  sfxBusNode.connect(a.destination);
+  sfxBusNode.connect(d); d.connect(fb); fb.connect(d); d.connect(wet);
+  wet.connect(a.destination);
+  return sfxBusNode;
+}
+function sfxNote(t,freq,dur,gain){
+  var a=sfxCtx(),bus=sfxBus(); if(!a||!bus)return;
+  var g=a.createGain();
+  g.gain.setValueAtTime(0.0001,t);
+  g.gain.linearRampToValueAtTime(gain,t+0.006);        // no ramp worth hearing
+  g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+  var f=a.createBiquadFilter();
+  f.type="lowpass"; f.Q.value=7;
+  f.frequency.setValueAtTime(freq*2,t);
+  f.frequency.exponentialRampToValueAtTime(freq*7,t+dur*0.5);
+  [7,-7].forEach(function(cents){                      // detuned pair = width
+    var o=a.createOscillator();
+    o.type="square"; o.frequency.value=freq; o.detune.value=cents;
+    o.connect(f); o.start(t); o.stop(t+dur+0.03);
+  });
+  f.connect(g); g.connect(bus);
+}
+// A4 - C5 - G5. Root, minor third, minor seventh: rising, unresolved, and
+// distinctly not a doorbell.
+var CUE_DISCOVER=[[0,440.00,0.16,0.20],
+                  [0.095,523.25,0.16,0.20],
+                  [0.205,783.99,0.42,0.24]];
+function sfx(name){
+  sfxLast=name; sfxCount++;
+  if(!sfxOn)return;
+  var a=sfxCtx(); if(!a)return;
+  if(a.state==="suspended"){ if(a.resume)a.resume(); return }  // not yet allowed
+  var t0=a.currentTime+0.02;
+  CUE_DISCOVER.forEach(function(n){sfxNote(t0+n[0],n[1],n[2],n[3])});
+}
+function sfxToggle(){
+  sfxOn=!sfxOn; lsSet("sfx",sfxOn?"1":"0"); sfxPaint();
+  if(sfxOn)sfx("discover");
+}
+function sfxTest(){sfxUnlock();sfx("discover")}
+function sfxPaint(){
+  var b=$("sfxbtn"); if(b)b.textContent="ALERT: "+(sfxOn?"ON":"OFF");
+}
+
+// Which nodes are new since the last poll. Seeded silently on the first render
+// so that opening the portal in a room full of people is not an alarm — they
+// were already there, and only an arrival is news.
+var sfxSeen=null;
+function newContacts(nodes){
+  var ids={},fresh=[];
+  (nodes||[]).forEach(function(n){if(!n.training)ids[n.id]=1});
+  if(sfxSeen!==null)
+    for(var k in ids) if(!sfxSeen[k]) fresh.push(k);
+  sfxSeen=ids;
+  return fresh;
+}
+
+// ── standings and census ──
+//
+// Both are built from what this device heard for itself. Nothing is forwarded,
+// nothing is taken on another player's word, and there is no roster on the air:
+// every number below comes out of S.nodes, which the page already has.
+//
+// The important decision is that recon GATES the board rather than the board
+// leaking recon. A ranking needs a level, level is intel tier 6, so a contact
+// you have not read to round 6 simply cannot be placed — they sit under the
+// list as unidentified. That turns the standings into a to-do list for the
+// mini-game instead of a way to skip it.
+function standings(){
+  var known=[],unknown=0;
+  (S.nodes||[]).forEach(function(n){
+    if(n.training)return;
+    if((n.intel||0)>=6&&n.level>0) known.push({name:n.name,lvl:n.level,
+                                               fac:n.faction,pwned:n.pwned});
+    else unknown++;
+  });
+  known.push({name:S.name,lvl:S.level,fac:(S.faction||"?").charAt(0),me:true});
+  // Level first, then the name, so the order is stable between polls rather
+  // than shuffling every two seconds on ties.
+  known.sort(function(a,b){return b.lvl-a.lvl||(a.name<b.name?-1:1)});
+  return {known:known,unknown:unknown};
+}
+
+function censusOf(){
+  var c={B:0,W:0,R:0,G:0,"?":0};
+  (S.nodes||[]).forEach(function(n){
+    if(n.training)return;
+    // Faction is tier 4. Below it we honestly do not know, and an aggregate is
+    // the one place we can say so without naming anybody.
+    c[((n.intel||0)>=4&&n.faction&&c[n.faction]!==undefined)?n.faction:"?"]++;
+  });
+  var mine=(S.faction||"?").charAt(0);
+  if(c[mine]!==undefined)c[mine]++;
+  return c;
+}
+
+var FACFULL={B:"BLACK",W:"WHITE",R:"RED",G:"GREEN","?":"UNKNOWN"};
+function drawBoard(){
+  var st=standings();
+  $("board").innerHTML=st.known.slice(0,8).map(function(p,i){
+    return '<div class="lb'+(p.me?" me":"")+'">'+
+      '<span class="r">'+(i+1)+'</span>'+
+      '<span class="n">'+esc(p.name)+(p.me?" (you)":"")+
+        (p.pwned?' <span class="pill fB">PWNED</span>':'')+'</span>'+
+      '<span class="pill f'+esc(p.fac)+'">'+esc(p.fac)+'</span>'+
+      '<span class="v">LVL '+p.lvl+'</span></div>'}).join("");
+  $("boardnote").textContent = st.unknown
+    ? st.unknown+" contact"+(st.unknown>1?"s":"")+" cannot be ranked yet — "+
+      "clear 6 rounds of recon on someone to place them."
+    : "Everyone you can hear is identified.";
+}
+
+function drawCensus(){
+  var c=censusOf(),total=0;
+  ["B","W","R","G","?"].forEach(function(k){total+=c[k]});
+  // Share of the room, not share of the largest faction. Scaling to the max
+  // fills every bar whenever the count is level, which reads as a broken
+  // widget rather than as a tie — and "what fraction of the people here are
+  // RED" is the question a census is actually being asked.
+  $("census").innerHTML=["B","W","R","G","?"].map(function(k){
+    return '<div class="cen '+(k==="?"?"fq":"f"+k)+'">'+
+      '<span class="k">'+FACFULL[k]+'</span>'+
+      '<span class="t"><span class="f" style="width:'+
+        (total?Math.round(c[k]*100/total):0)+'%"></span></span>'+
+      '<span class="c">'+c[k]+'</span></div>'}).join("");
+  $("censusnote").textContent=total+" heard, including you. "+
+    (c["?"]?c["?"]+" still unidentified — faction is round 4.":"All identified.");
+}
+
+// ── rendering ──
+function fmtAge(ms){var s=Math.floor(ms/1000);
+  if(s<60)return s+"s ago";if(s<3600)return Math.floor(s/60)+"m ago";
+  return Math.floor(s/3600)+"h ago"}
+function fmtLeft(ms){if(ms<=0)return"";
+  var m=Math.floor(ms/60000),h=Math.floor(m/60),d=Math.floor(h/24);
+  if(d>0)return d+"d "+(h%24)+"h";if(h>0)return h+"h "+(m%60)+"m";
+  return m+"m"}
+function bars(n){var o="";for(var i=1;i<=4;i++)o+='<i class="'+(i<=n?"on":"")+'"></i>';
+  return '<span class="bars">'+o+'</span>'}
+
+function render(){
+  if(!S.configured){$("setup").className="wrap";$("app").className="hide";return}
+  $("setup").className="wrap hide";$("app").className="";
+
+  $("hname").textContent=S.name;$("hlvl").textContent=S.level;
+  $("hfac").textContent=S.faction;$("hfac").className="pill f"+S.faction.charAt(0);
+  $("hbat").textContent=(S.onUsb||S.battery<0)?"USB":S.battery+"%";
+  $("hlora").textContent=S.lora.status;
+  $("hdot").className="dot"+(S.lora.ready?"":" off");
+  $("hxp").textContent=S.xp+" / "+S.xpNext;
+  $("hxpbar").style.width=Math.min(100,S.xpNext?S.xp*100/S.xpNext:0)+"%";
+  $("hbr").textContent=S.brute;$("hst").textContent=S.stealth;$("hfw").textContent=S.firewall;
+  $("hnodes").textContent=S.nodes.length;
+  $("hrssi").textContent=S.lora.rssi+" dBm";
+  $("hduty").textContent=S.lora.duty.toFixed(2)+"% of 1% limit";
+
+  drawBoard(); drawCensus();
+  var t=S.stats||{};
+  $("rwon").textContent=t.won||0;    $("rlost").textContent=t.lost||0;
+  $("rheld").textContent=t.held||0;  $("rbrch").textContent=t.breached||0;
+  $("rmet").textContent=t.met||0;    $("rseq").textContent=(t.bestSeq||0)+" / 10";
+
+  $("ksp").textContent=S.sp;$("kbr").textContent=S.brute;
+  $("kst").textContent=S.stealth;$("kfw").textContent=S.firewall;
+  Array.prototype.forEach.call(document.querySelectorAll(".sk"),function(b){b.disabled=S.sp<1});
+
+  // Anyone who was not here last poll. Done before the list is drawn so the
+  // sound and the card land together.
+  if(newContacts(S.nodes).length)sfx("discover");
+
+  // radar, strongest first
+  var ns=S.nodes.slice().sort(function(a,b){return b.avgRssi-a.avgRssi});
+  $("rcount").textContent=ns.length+" in range";
+  $("nonodes").className="card"+(ns.length?" hide":"");
+  $("nodelist").innerHTML=ns.map(function(n,ni){
+    var pips="";for(var i=0;i<3;i++)pips+=(i<n.recon?"●":"○");
+    var cd=n.cooldownMs>0;
+    var lock=n.hackWon?"OWNED · "+fmtLeft(n.cooldownMs):
+             (cd?"LOCKED OUT · "+fmtLeft(n.cooldownMs):"");
+    // An unscouted contact is a signal, not a person: no name, no faction, no
+    // level. Recon is the only thing that turns one into the other.
+    var known=(n.intel||0),anon=known<2;
+    var stat=function(v){return v>=0?v:"?"};
+    return '<div class="node'+(n.status==="FADING"?" fade":"")+'">'+
+      '<div class="row"><div><b>'+esc(n.name)+'</b> '+
+        (n.pwned?'<span class="pill fB" title="backdoor open">PWNED</span> ':'')+
+        '<span class="pill f'+esc(n.faction)+'">'+esc(n.faction)+'</span></div>'+
+        '<div class="xs mut">'+(n.level?"LVL "+n.level:"LVL ?")+'</div></div>'+
+      '<div class="row xs mut" style="margin-top:6px">'+
+        '<span>'+bars(n.bars)+' '+esc(n.proximity)+'</span>'+
+        '<span>'+fmtAge(n.ageMs)+'</span></div>'+
+      (known>=7?'<div class="row xs mut" style="margin-top:6px">'+
+        '<span>BRU '+stat(n.brute)+'</span><span>STE '+stat(n.stealth)+'</span>'+
+        '<span>FW '+stat(n.firewall)+'</span></div>':'')+
+      '<div class="row" style="margin-top:8px">'+
+        '<span class="xs mut">Recon <span class="pips">'+pips+'</span>'+
+          ' &middot; intel '+known+'/'+(n.reconMax||10)+
+          (n.odds>=0?' &middot; odds '+n.odds+'%':' &middot; odds unknown')+'</span>'+
+        (lock?'<span class="xs mut">'+lock+'</span>':'')+'</div>'+
+      (anon?'<div class="xs mut" style="margin-top:6px">'+
+        'Unidentified. Clear 2 rounds of recon for a codename, 4 for their '+
+        'faction, 6 for their level, 7&ndash;9 for their stats.</div>':'')+
+      (n.pwned?'<div class="xs mut" style="margin-top:6px">'+
+        'Backdoor open &mdash; their file never expires, and recon costs you '+
+        'neither an attempt nor a game.</div>':'')+
+      (n.training?'<div class="xs mut" style="margin-top:6px">'+
+        'Practice target. Scout it, watch their file come apart, then hack it. '+
+        'It disappears once you reach LVL 2.</div>':'')+
+      (n.canHack===false?'<div class="xs mut" style="margin-top:6px">'+
+        'Immune &mdash; WHITE can only attack BLACK and RED.</div>':'')+
+      (n.canRecon===false?'<div class="xs mut" style="margin-top:6px">'+
+        (cd?'Recon locked until the cooldown ends &mdash; then 3 fresh attempts.'
+           :'Recon spent. Hack it, or wait out the cooldown for 3 more.')+'</div>':'')+
+      '<div class="row" style="margin-top:10px;gap:8px">'+
+        '<button class="btn inline ghost" '+(n.canRecon===false?"disabled":"")+
+          ' onclick="seqFromRadar('+ni+')">'+(n.pwned?"RE-ENTER":"RECON")+'</button>'+
+        '<button class="btn inline" '+((cd||n.canHack===false)?"disabled":"")+
+          ' onclick="act(\'hack\',{id:\''+n.id+'\'})">HACK</button>'+
+      '</div></div>'}).join("");
+  radarNodes=ns;
+
+  // Echoes, drawn in their own section and never merged into the radar. A
+  // dashed border and no signal bars, because there is no signal to report:
+  // the strength we measured belongs to whoever relayed the echo, not to the
+  // node it names, and printing it here would put "VERY CLOSE" on somebody a
+  // kilometre away.
+  var es=(S.echoes||[]).filter(function(e){return e.reachable});
+  echoNodes=es;
+  $("echohdr").className="row"+(es.length?"":" hide");
+  $("ecount").textContent=es.length?es.length+" beyond direct range":"";
+  $("echolist").innerHTML=es.map(function(e,ei){
+    return '<div class="echo">'+
+      '<div class="row"><div><b>'+esc(e.name)+'</b> '+
+        (e.pwned?'<span class="pill fB" title="backdoor open">PWNED</span> ':'')+
+        '<span class="pill" style="opacity:.6">ECHO</span></div>'+
+        '<div class="xs mut">'+fmtAge(e.ageMs)+'</div></div>'+
+      '<div class="xs mut" style="margin-top:6px">'+
+        'Out of your range. <b>'+esc(e.via)+'</b> can hear them.</div>'+
+      '<div class="xs mut" style="margin-top:6px">'+
+        'You cannot scout or hack an echo &mdash; only what your own radio '+
+        'hears counts. You can send them a message and it will travel via '+
+        esc(e.via)+'.</div>'+
+      '<div class="row" style="margin-top:10px">'+
+        '<button class="btn inline ghost" onclick="mailTo(\''+e.id+'\')">'+
+        'SEND VIA COURIER</button></div>'+
+    '</div>'}).join("");
+
+  // message targets + inbox
+  var opts=ns.map(function(n){return'<option value="'+n.id+'">'+esc(n.name)+'</option>'}).join("");
+  var eopts=es.map(function(e){
+    return'<option value="'+e.id+'">'+esc(e.name)+' \u2014 via '+esc(e.via)+'</option>'}).join("");
+  ["mto","pingto"].forEach(function(id){
+    var e=$(id),keep=e.value;
+    // Only messages can be addressed past direct range; a ping measures a
+    // link, so offering an echo there would be measuring nothing.
+    var list=(id==="mto")?opts+eopts:opts;
+    e.innerHTML=list||'<option value="">No nodes in range</option>';
+    if(keep)e.value=keep});
+  var m=S.mail||{};
+  $("mailstat").textContent=
+    (m.pending?m.pending+" waiting to be delivered":"Nothing waiting")+
+    (m.carried?" \u00b7 carrying "+m.carried+" for others":"")+
+    (m.delivered?" \u00b7 "+m.delivered+" delivered":"");
+  // The last ten, newest first, each showing the route it took. This used to
+  // be one message per node, pulled from the radar — so it lost the older of
+  // two messages from the same person, and lost all of them when that person
+  // aged out of the node table.
+  var ml=S.msgs||[];
+  $("mcount2").textContent=ml.length?ml.length+(ml.length===1?" message":" messages"):"";
+  $("inbox").innerHTML=ml.length?ml.map(function(m){
+    return'<div class="msg"><div class="row"><span class="xs mut"><b>'+esc(m.from)+'</b>'+
+      (m.via?' <span class="viab">via '+esc(m.via)+'</span>':'')+'</span>'+
+      '<span class="xs mut">'+fmtAge(m.ageMs)+'</span></div>'+
+      '<div>'+esc(m.text)+'</div></div>'
+    }).join(""):'<div class="xs mut">No messages yet.</div>';
+
+  var ev=S.events||[];
+  $("lcount").textContent=ev.length?ev.length+" recent":"nothing yet";
+  $("loglist").innerHTML=ev.length?ev.map(function(e){
+    var xp=e.xp?'<span style="color:'+(e.xp>0?"#8dffb4":"#ffb0b0")+'">'+
+      (e.xp>0?"+":"")+e.xp+' XP</span>':'';
+    return '<div class="msg"><div class="row">'+
+      '<span>'+esc(e.t)+(e.who?' <b>'+esc(e.who)+'</b>':'')+'</span>'+
+      '<span class="xs mut">'+fmtAge(e.ageMs)+'</span></div>'+
+      (xp?'<div class="xs">'+xp+'</div>':'')+'</div>';
+  }).join(""):'<div class="xs mut">Nothing has happened yet. Wait for a node to '+
+    'appear, or scout one from the Radar.</div>';
+
+  $("pwstate").textContent=pw()?"password saved":"not set — actions will ask";
+  $("cname").textContent=S.name;$("cfac").textContent=S.faction;
+  $("cid").textContent=S.id;$("cver").textContent=S.version;
+
+  // action feedback driven by the device, not guessed by the browser (T3.5)
+  var a=S.action;
+  if(a.pending){banner(a.label+": WAITING FOR REPLY ("+a.tries+"/4)…","wait",true)}
+  else if(a.state==="NO RESPONSE"&&a.label){banner(a.label+": NO RESPONSE — out of range?","bad")}
+  else if(a.state==="SUCCESS"&&a.label){banner(a.label+": SUCCESS","go")}
+}
+
+function refresh(){
+  return fetch("/api/state").then(function(r){return r.json()})
+    .then(function(j){S=j;render()}).catch(function(){})}
+
+// The poll is pausable. render() rebuilds every tab's markup, and on a phone
+// that is tens of milliseconds of main thread every two seconds — fine while
+// you are reading the radar, not fine while you are playing a timing game on
+// top of it. It also stops asking the ESP32 to serialise its whole state while
+// the radio is busy. Resumed the moment the mini-game closes.
+var pollIv=null;
+function pollStart(){if(!pollIv)pollIv=setInterval(refresh,2000)}
+function pollStop(){if(pollIv){clearInterval(pollIv);pollIv=null}}
+
+function loadDiag(){
+  fetch("/api/diag").then(function(r){return r.json()}).then(function(d){
+    $("diagbody").innerHTML=Object.keys(d).map(function(k){
+      return'<div class="kv"><span class="mut">'+esc(k)+'</span><span>'+esc(d[k])+'</span></div>'
+    }).join("")})}
+function showDiag(){tab("diag")}
+function doPing(){var id=$("pingto").value;if(!id)return;
+  $("pingout").textContent="Pinging…";
+  fetch("/api/ping?id="+encodeURIComponent(id)).then(function(r){return r.json()})
+    .then(function(p){$("pingout").innerHTML=p.ok?
+      '<span style="color:#8dffb4">Reply in '+p.rttMs+' ms after '+p.tries+' attempt(s), '+p.rssi+' dBm</span>':
+      '<span style="color:#ffb0b0">No response after '+p.tries+' attempts</span>'})}
+
+$("mtxt").addEventListener("input",function(){
+  $("mcount").textContent=this.value.length+" / 32"});
+
+// One press anywhere is enough to earn the right to make noise later.
+if(typeof document!=="undefined"&&document.addEventListener)
+  document.addEventListener("pointerdown",sfxUnlock,{once:true});
+sfxPaint();
+
+refresh();pollStart();
+</script></body></html>)PORTAL";
