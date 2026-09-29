@@ -76,6 +76,12 @@
 // ── Header flags ─────────────────────────────
 #define PKTFLAG_ACK_REQ 0x01  // sender wants an ACK for this seq
 #define PKTFLAG_IS_ACK  0x02  // this frame *is* an ACK; seq = acked seq
+// The T-Deck edition's extensions. Every other build only ever tests the two
+// bits above, so these ride along unnoticed by devices that do not know them
+// (and the HMAC covers the whole header, so nobody can add them in transit).
+#define PKTFLAG_TDECK      0x10  // BEACON: the sender plays the timed hack game
+#define PKTFLAG_TIMED      0x20  // HACK_REQ: decided by the attacker's timing game
+#define PKTFLAG_TIMED_WIN  0x40  // HACK_REQ: ...and the attacker hit the zone
 
 // ── Recon mini-game (sequence memory) ────────
 //  Recon is played on the phone: a sequence of tiles flashes and you repeat
@@ -435,6 +441,17 @@ struct KnownNode {
   char          msg_inbox[33];
   bool          msg_unread;
   char          msg_sent[33];   // last message WE sent to this node
+
+  // Heard a PKTFLAG_TDECK beacon from them: they understand timed hacks, so a
+  // miss can be reported to them and they will record it the same way.
+  bool          tdeck;
+  // The last timed hack this node made on us (T-Deck defender only, RAM
+  // only): lets us refuse a "timed win" that its own device's locks could
+  // never have allowed. timed_won: 0 none (a fresh record is zeroed),
+  // 1 held, 2 breached.
+  uint32_t      timed_ms;
+  uint8_t       timed_seq;
+  uint8_t       timed_won;
 };
 
 // Is this tier unlocked on this node?

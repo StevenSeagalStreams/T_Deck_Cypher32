@@ -736,6 +736,9 @@ void loraSendBeacon() {
   fillHdr(&pkt.hdr, PKT_BEACON, 0);
   pkt.level   = (uint8_t)myLevel;
   pkt.faction = myFaction.length() > 0 ? myFaction.charAt(0) : '?';
+#if defined(CYPHER32_TDECK)
+  pkt.hdr.flags |= PKTFLAG_TDECK;
+#endif
   if (loraSendUnreliable(&pkt, sizeof(pkt), /*urgent=*/false)) loraBeaconsSent++;
 }
 
@@ -780,9 +783,22 @@ int loraHackChancePct(int attackerBrute, int attackerRecon,
 }
 
 // Begin a hack. The verdict arrives later in PKT_HACK_REPLY (T4.3).
-void loraHackStart(uint32_t target_id, int reconScore) {
+//
+// timed: -1 for a classic hack (the defender rolls the dice), or the result
+// of the T-Deck's timing game — 1 hit, 0 miss. A timed hack is decided by the
+// game: a T-Deck defender honours the flag and replies with that outcome; any
+// other device ignores the flag, rolls its own dice for its own records, and
+// the attacker applies the game's result regardless (hackTimedOutcome).
+int8_t hackTimedOutcome = -1;
+// How long after a timed hack its attacker's own device refuses another try
+// on us (12 h owned / 30 min traced), less a little for clock skew.
+#define TIMED_TRUST_WIN_MS   (12UL * 3600000UL - 120000UL)
+#define TIMED_TRUST_FAIL_MS  (30UL * 60000UL - 60000UL)
+void loraHackStart(uint32_t target_id, int reconScore, int timed = -1) {
   PktHackReq pkt;
   fillHdr(&pkt.hdr, PKT_HACK_REQ, target_id);
+  if (timed >= 0) pkt.hdr.flags |= PKTFLAG_TIMED | (timed ? PKTFLAG_TIMED_WIN : 0);
+  hackTimedOutcome = (int8_t)timed;
   pkt.brute       = (uint8_t)skillBrute;
   pkt.recon_score = (uint8_t)(reconScore < 0 ? 0 :
                               reconScore > RECON_MAX_SEQ ? RECON_MAX_SEQ : reconScore);
@@ -1184,6 +1200,7 @@ void loraHandlePacket(uint8_t* buf, int len) {
       KnownNode* n = touchNode(p->hdr.from_id);
       if (!n) return;
       n->level = p->level; n->faction = (char)p->faction;
+      n->tdeck = (p->hdr.flags & PKTFLAG_TDECK) != 0;
       break;
     }
     case PKT_RECON_REQ: {
@@ -1236,6 +1253,34 @@ void loraHandlePacket(uint8_t* buf, int len) {
       int  pct          = loraHackChancePct(p->brute, claimed,
                                             p->stealth, skillFirewall);
       bool attackerWins = (random(0, 100) < pct);
+#if defined(CYPHER32_TDECK)
+      // A timed hack was decided by the attacker's timing game, which already
+      // weighed our stealth and firewall. Honour it, so both devices agree —
+      // but only from a device that has shown itself as a T-Deck, and only
+      // when that device's own locks would have let it try: an honest T-Deck
+      // cannot hack us again within 12 h of breaching us, nor within 30 min
+      // of being traced. Anything else claiming a timed win gets the dice.
+      // (A retry of the very same request keeps the verdict it already got.)
+      if ((hdr->flags & PKTFLAG_TIMED) && !(hdr->flags & PKTFLAG_TIMED_WIN)) {
+        // A reported miss can only cost its sender: believed from anyone, so
+        // both screens agree it was held.
+        attackerWins = false; pct = 0;
+        KnownNode* an = findNode(hdr->from_id);
+        if (an) { an->timed_ms = millis(); an->timed_seq = hdr->seq; an->timed_won = 1; }
+      } else if (hdr->flags & PKTFLAG_TIMED) {
+        KnownNode* an = findNode(hdr->from_id);
+        uint32_t since = an ? (uint32_t)(millis() - an->timed_ms) : 0;
+        bool same = an && an->timed_won && an->timed_seq == hdr->seq && since < 60000UL;
+        bool locked = an && !same &&
+                      ((an->timed_won == 2 && since < TIMED_TRUST_WIN_MS) ||
+                       (an->timed_won == 1 && since < TIMED_TRUST_FAIL_MS));
+        if (an && an->tdeck && !locked) {
+          attackerWins = same ? (an->timed_won == 2) : (hdr->flags & PKTFLAG_TIMED_WIN) != 0;
+          pct = attackerWins ? 100 : 0;
+          if (!same) { an->timed_ms = millis(); an->timed_seq = hdr->seq; an->timed_won = attackerWins ? 2 : 1; }
+        }
+      }
+#endif
 
       PktHackReply reply;
       fillHdr(&reply.hdr, PKT_HACK_REPLY, hdr->from_id);

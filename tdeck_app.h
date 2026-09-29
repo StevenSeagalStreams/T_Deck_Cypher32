@@ -67,6 +67,27 @@ void tdeckSavePrefs() {
   preferences.putUChar("portal", tdp.portal);
   preferences.end();
 }
+// A breach whose countdown started is resolved by a verdict or not at all:
+// the target is written here when the countdown starts and cleared when the
+// verdict is applied. Found set at boot, the device was switched off
+// mid-breach, and that is a miss (see tdeckAppBegin).
+// True while a breach run is counting down or the ball is moving: the sketch
+// holds back anything slow (flash writes, the web portal) until it is over.
+bool breachLive();
+
+void breachPendingSave(uint32_t id) {
+  preferences.begin("c32-tdeck", false);
+  preferences.putULong("brPend", id);
+  preferences.end();
+}
+static uint32_t breachPendingTake() {
+  preferences.begin("c32-tdeck", false);
+  uint32_t id = preferences.getULong("brPend", 0);
+  if (id) preferences.putULong("brPend", 0);
+  preferences.end();
+  return id;
+}
+
 // The web portal and its Wi-Fi are off unless asked for: the T-Deck does not
 // need a phone, and the access point is the biggest drain on the battery.
 bool tdeckPortalEnabled() { return tdp.portal != 0; }
@@ -207,7 +228,7 @@ static String fmtLeft(unsigned long ms) {
 // ─────────────────────────────────────────────
 enum Tab   : uint8_t { T_HOME, T_RADAR, T_INBOX, T_SKILLS, T_LOG, T_OPTS, T_COUNT };
 enum Modal : uint8_t { M_NONE, M_SETUP, M_DOSSIER, M_RECON, M_COMPOSE, M_CONFIRM,
-                       M_CARD, M_TEXT, M_DIAG, M_BREACH, M_ABOUT };
+                       M_CARD, M_TEXT, M_DIAG, M_BREACH, M_ABOUT, M_BREACHGAME };
 static const char* TAB_NAME[T_COUNT] = { "HOME", "RADAR", "INBOX", "SKILLS", "LOG", "OPTIONS" };
 static const char  TAB_KEY[T_COUNT]  = { 'h', 'r', 'i', 'k', 'l', 'o' };
 
@@ -237,6 +258,12 @@ struct UI {
   String   breachName; uint32_t breachStart = 0;
   // wake / power
   bool     dimmed = false, asleep = false;
+  // trackball presses already used by the breach game: their release must not
+  // then also count as a "select"
+  // A trackball click is a press and a release; one whose press went down
+  // while the breach game was open belongs to the game, even if the release
+  // comes after it has closed.
+  uint32_t gameClosedAt = 0; uint32_t clickSeen = 0;
   // change detection for live screens
   uint32_t sig = 0;
 } ui;
@@ -316,7 +343,8 @@ uint8_t  cardQn = 0;
 
 static bool cardBusy() {
   uint8_t m = ui.modal;
-  return m == M_RECON || m == M_COMPOSE || m == M_TEXT || m == M_CONFIRM || m == M_SETUP || m == M_CARD;
+  return m == M_RECON || m == M_COMPOSE || m == M_TEXT || m == M_CONFIRM || m == M_SETUP || m == M_CARD ||
+         m == M_BREACHGAME;
 }
 static void reconClose();
 static void showCard(const Card& c) {
@@ -499,7 +527,7 @@ static void reconNextRound() {
 static void reconFinish(const String& why) {
   rc.phase = RC_DONE;
   String m = why + " Sequence " + String(rc.best) + " = +" +
-             String(rc.best * RECON_MAX_BONUS / RECON_MAX_SEQ) + "% odds.";
+             String(rc.best * 3) + "% breach window.";
   for (int i = 0; i < 7; i++) if (RC_TIERS[i] > rc.best) {
     m += " Round " + String(RC_TIERS[i]) + " was their " + String(RC_LABEL[i]) + ".";
     break;
@@ -653,13 +681,88 @@ static void composeSend() {
 // ─────────────────────────────────────────────
 //  Hacking from the dossier
 // ─────────────────────────────────────────────
-static void hackGo(uint32_t id) {
-  ActResult r = actHack(id);
-  if (r.code != 200) { toast(r.msg, TT_BAD); sfx(SFX_ERR); return; }
-  if (r.instant) return;                       // training: the card is already up
-  ui.breachName = nodeDisplayName(id); ui.breachStart = millis();
-  ui.modal = M_BREACH; ui.dirty = true;
-  av.trigger(AV_R_SCAN, millis(), 6000);
+//  A hack is played as the breach game (tdeck_breach.h). What it will look
+//  like against a target — the gap and the ball's speed — is worked out here
+//  so the dossier and the radar can show it before you commit.
+struct BreachTune {
+  int      zoneW, coreW;       // px: the gap, and its dead centre
+  int      speed;              // px/s
+  uint32_t periodMs;           // one sweep there and back
+  int      maxSweeps;          // wall-to-wall legs before it times out
+  int      windowMs;           // how long the ball is inside the gap per pass
+};
+BreachTune breachTune(int aB, int aS, int aF, float dB, float dS, float dF, int recon, bool practice);
+#define BR_LEN  280                              // px: the bar the ball runs along
+#define BR_EDGE 64                               // px: the gap keeps this clear of each end
+// How much each of the target's stats weighs in the breach (the exponents in
+// breachTune): STEALTH narrows the gap, FIREWALL speeds the ball, BRUTE
+// counters your stealth.
+#define BRT_E_W  1.75f                           // your BRUTE vs their STEALTH
+#define BRT_E_T  1.05f                           // your STEALTH vs their BRUTE
+#define BRT_E_V  1.40f                           // their FIREWALL vs your FIREWALL
+
+// What the attacker knows about the target, and so what the game is played
+// against. A stat the recon has not reached yet is assumed to be the worst
+// it could possibly be: the target's level is public (every beacon carries
+// it), so their points are known in total, and whatever is not yet revealed
+// is assumed spread the way that would make this breach hardest (within what
+// their faction, once known, guarantees). So scouting
+// can only ever make a breach easier or leave it as it is — never harder —
+// and skipping recon is never a way around a strong target.
+struct BreachSpec {
+  BreachTune tu;
+  float dB = 0, dS = 0, dF = 0;                  // what the game uses
+  bool  knowB = false, knowS = false, knowF = false;
+  int   recon = 0;
+};
+static BreachSpec breachSpecFor(uint32_t id) {
+  BreachSpec s;
+  bool practice = id == TRAINING_ID;
+  int total = 0, tb = -1, ts = -1, tf = -1;
+  char fac = '?';
+  if (practice) {
+    int k = trainScore;
+    total = TRAIN_BRUTE + TRAIN_STEALTH + TRAIN_FIREWALL;
+    if (k >= RECON_T_BRUTE)    tb = TRAIN_BRUTE;
+    if (k >= RECON_T_STEALTH)  ts = TRAIN_STEALTH;
+    if (k >= RECON_T_FIREWALL) tf = TRAIN_FIREWALL;
+    s.recon = k;
+  } else {
+    KnownNode* n = findNode(id);
+    int lvl = n && n->level > 0 ? n->level : myLevel + 2;
+    if (lvl > MAX_LEVEL) lvl = MAX_LEVEL;
+    total = lvl + 2;                             // level-1 earned + 3 from the faction
+    if (n) { tb = nodeKnownBrute(n); ts = nodeKnownStealth(n); tf = nodeKnownFirewall(n);
+             fac = nodeKnownFaction(n); s.recon = n->recon_score; }
+  }
+  s.knowB = tb >= 0; s.knowS = ts >= 0; s.knowF = tf >= 0;
+  // Once recon has their faction, its starting points are a floor under each
+  // stat still hidden (BLACK +3 BRUTE, WHITE +3 FIREWALL, RED +3 STEALTH,
+  // GREEN +1 each).
+  int fl[3] = { 0, 0, 0 };
+  if (fac == 'B') fl[0] = 3; else if (fac == 'R') fl[1] = 3;
+  else if (fac == 'W') fl[2] = 3; else if (fac == 'G') fl[0] = fl[1] = fl[2] = 1;
+  float x[3] = { (float)(s.knowB ? tb : fl[0]), (float)(s.knowS ? ts : fl[1]), (float)(s.knowF ? tf : fl[2]) };
+  float R = (float)total - x[0] - x[1] - x[2];  // points not accounted for yet
+  if (R < 0) R = 0;
+  // Worst case: breachTune is linear in each stat inside its exponent, so
+  // the hardest spread puts every unaccounted point on the unknown stat that
+  // weighs most — STEALTH (1.75), else FIREWALL (1.4), else BRUTE (1.05).
+  if (!s.knowS) x[1] += R;
+  else if (!s.knowF) x[2] += R;
+  else if (!s.knowB) x[0] += R;
+  s.dB = x[0]; s.dS = x[1]; s.dF = x[2];
+  s.tu = breachTune(skillBrute, skillStealth, skillFirewall, s.dB, s.dS, s.dF, s.recon, practice);
+  return s;
+}
+static int breachWindowMs(const BreachTune& t) { return t.windowMs; }
+// Bands of that window, for a typical player (~35 ms of timing spread):
+// EASY ≥ ~75% hits, FAIR ~60-75%, HARD ~45-60%, BRUTAL below.
+static const char* breachGrade(int windowMs) {
+  return windowMs >= 91 ? "EASY" : windowMs >= 65 ? "FAIR" : windowMs >= 45 ? "HARD" : "BRUTAL";
+}
+static uint16_t breachGradeCol(int windowMs) {
+  return windowMs >= 91 ? PAL.good : windowMs >= 65 ? PAL.accent : windowMs >= 45 ? PAL.warn : PAL.bad;
 }
 
 // ─────────────────────────────────────────────
@@ -782,12 +885,13 @@ static NextMove nextMove() {
     KnownNode* n = &knownNodes[i];
     String nid = chipIdStr(n->chip_id);
     if (nodeOdds(n) >= 0 && nodeCanHack(n) && !recentlyHacked(nid) && !recentlyFailed(nid))
-      return { nodeDisplayName(n->chip_id) + " is readable: " + String(nodeOdds(n)) + "%. Breach?", NX_DOSSIER, n->chip_id };
+      return { nodeDisplayName(n->chip_id) + " is readable: " +
+               breachGrade(breachWindowMs(breachSpecFor(n->chip_id).tu)) + " breach. Go?", NX_DOSSIER, n->chip_id };
   }
   for (int i = 0; i < knownCount; i++) {
     KnownNode* n = &knownNodes[i];
     if (nodeCanRecon(n) && n->recon_score < RECON_T_FIREWALL)
-      return { "Read " + nodeDisplayName(n->chip_id) + " deeper for their odds.", NX_DOSSIER, n->chip_id };
+      return { "Read " + nodeDisplayName(n->chip_id) + " deeper: recon widens the gap.", NX_DOSSIER, n->chip_id };
   }
   return { "All quiet. Say something to someone.", NX_COMPOSE, 0 };
 }
@@ -915,7 +1019,10 @@ static void drawRadar(uint32_t now) {
     }
     // Status.
     String st; uint16_t sc2 = PAL.fg;
-    if (row.training) { int o = trainingOdds(); st = o >= 0 ? String(o) + "%" : "PRACTICE"; sc2 = PAL.warn; }
+    if (row.training) {
+      if (trainScore >= RECON_T_FIREWALL) { int w = breachWindowMs(breachSpecFor(TRAINING_ID).tu); st = breachGrade(w); sc2 = breachGradeCol(w); }
+      else { st = "PRACTICE"; sc2 = PAL.warn; }
+    }
     else {
       String nid = chipIdStr(row.id);
       unsigned long cd = hackCooldownLeft(nid);
@@ -923,7 +1030,7 @@ static void drawRadar(uint32_t now) {
       if (recentlyHacked(nid)) { st = "OWNED " + fmtLeft(cd); sc2 = PAL.good; }
       else if (cd > 0)         { st = "LOCK " + fmtLeft(cd); sc2 = PAL.bad; }
       else if (!nodeCanHack(row.n)) { st = "IMMUNE"; sc2 = PAL.dim; }
-      else if (nodeOdds(row.n) >= 0 && !row.n->pwned) { st = String(nodeOdds(row.n)) + "%"; sc2 = PAL.accent; }
+      else if (nodeOdds(row.n) >= 0 && !row.n->pwned) { int w = breachWindowMs(breachSpecFor(row.id).tu); st = breachGrade(w); sc2 = breachGradeCol(w); }
       else if (!st.length()) { st = "SCOUT"; sc2 = PAL.dim; }
       if (row.n->msg_unread) { GR.fillCircle(314, y + 4, 3, PAL.warn); }
     }
@@ -1001,10 +1108,15 @@ static void drawDossier(uint32_t now) {
   txt(rx + 78, y, freeRecon ? "free" : String(used < 3 ? 3 - used : 0) + " left", PAL.dim);
   y += 12;
   txt(rx, y, "BEST RUN " + String(training ? trainScore : n->recon_score) + "/10", PAL.dim); y += 12;
-  int odds = training ? trainingOdds() : nodeOdds(n);
-  txt(rx, y, "ODDS", PAL.fg);
-  txt(rx + 36, y, odds >= 0 ? String(odds) + "%" : "after round 9", odds >= 0 ? PAL.accent : PAL.dim, odds >= 0 ? 2 : 1);
-  y += 20;
+  // The breach you would face: how long the ball sits in the gap each pass.
+  BreachSpec bs = breachSpecFor(training ? TRAINING_ID : n->chip_id);
+  int win = breachWindowMs(bs.tu);
+  txt(rx, y, "BREACH", PAL.fg);
+  txt(rx + 48, y - 3, breachGrade(win), breachGradeCol(win), 2);
+  y += 16;
+  txt(rx, y, "gap " + String(bs.tu.zoneW) + "px  " + String(win) + "ms" +
+      ((!bs.knowB || !bs.knowS || !bs.knowF) ? " (guess)" : ""), PAL.dim);
+  y += 14;
   // Why things are greyed out, in the portal's words.
   String why = "";
   bool canRecon = training ? trainRecon < 3 : nodeCanRecon(n);
@@ -1038,9 +1150,8 @@ static void drawDossier(uint32_t now) {
   btn(162, "M", "MESSAGE", !training, PAL.accent);
   btn(238, "P", "PING", !training && !loraActionPending(), PAL.dim);
   if (armed) {
-    String c = "Odds " + (odds >= 0 ? String(odds) + "%" : String("unknown")) + ". X again to breach.";
-    txtC(160, ay + 30, c, PAL.bad);
-  } else if (skillPoints > 0) txtC(160, ay + 30, "Unspent skill points raise your odds: K", PAL.warn);
+    txtC(160, ay + 30, String(breachGrade(win)) + " breach. X again: stop the ball in the gap.", PAL.bad);
+  } else if (skillPoints > 0) txtC(160, ay + 30, "Unspent skill points widen your gap: K", PAL.warn);
   drawHint("S scout  X hack  M msg  P ping  BKSP back");
 }
 
@@ -1051,7 +1162,7 @@ static void drawRecon(uint32_t now) {
                        : nodeDisplayName(rc.target);
   txt(10, 38, "RECON  " + clip(nm, 16), PAL.fg);
   if (rc.len) txtR(310, 38, "ROUND " + String(rc.len) + "  best " + String(rc.best) + " = +" +
-                   String(rc.best * RECON_MAX_BONUS / RECON_MAX_SEQ) + "%", PAL.accent);
+                   String(rc.best * 3) + "% gap", PAL.accent);
   else        txtR(310, 38, "10 rounds max", PAL.dim);
   // Grid.
   const int TS = 44, GAP = 5, GX = 14, GY = 52;
@@ -1158,9 +1269,9 @@ static void drawInbox(uint32_t now) {
 
 static const char* SKILL_KEY[3] = { "brute", "stealth", "firewall" };
 static const char* SKILL_TXT[3] = {
-  "+2% hit chance per point above their firewall. Contested: can go negative.",
-  "+1% hit chance per point. Their firewall cannot cancel it.",
-  "Blunts attackers 2%/pt. Shrinks your own losses: 15-2*FW XP (min 5).",
+  "Widens your gap in a breach. Hacked: blunts their STEALTH.",
+  "Hacked: shrinks their gap. Breaching: counters their BRUTE.",
+  "Hacked: their ball runs faster. Losses cost 15-2*FW XP.",
 };
 static void drawSkills() {
   txt(6, 36, "SKILL POINTS", PAL.fg);
@@ -1381,6 +1492,8 @@ static void drawSetup(uint32_t now) {
   }
 }
 
+#include "tdeck_breach.h"
+
 // ── one frame ───────────────────────────────
 static void render(uint32_t now) {
   GR.fillScreen(PAL.bg);
@@ -1407,6 +1520,7 @@ static void render(uint32_t now) {
     case M_DIAG:    drawDiag(); break;
     case M_ABOUT:   drawAbout(); break;
     case M_BREACH:  drawBreach(now); break;
+    case M_BREACHGAME: drawBreachGame(now); break;
   }
   drawToast();
 }
@@ -1514,7 +1628,12 @@ static void nodeAction(char k, uint32_t id, bool echo) {
     case 's': reconStart(id); break;
     case 'x': {
       uint32_t now = millis();
-      if (ui.modal == M_DOSSIER && ui.hackArmUntil && (int32_t)(ui.hackArmUntil - now) > 0) { ui.hackArmUntil = 0; hackGo(id); }
+      if (ui.modal == M_DOSSIER && ui.hackArmUntil && (int32_t)(ui.hackArmUntil - now) > 0) {
+        ui.hackArmUntil = 0;
+        ActResult ok = actHackCheck(id);
+        if (ok.code != 200) { toast(ok.msg, TT_BAD); sfx(SFX_ERR); break; }
+        breachOpen(id);
+      }
       else { if (ui.modal != M_DOSSIER) openDossier(id, false); ui.hackArmUntil = now + 4000; ui.dirty = true; sfx(SFX_CLICK); }
       break;
     }
@@ -1640,7 +1759,7 @@ static void onNav(int dx, int dy) {
       }
       return;
     case M_COMPOSE: composeStep(dx ? dx : dy); return;
-    case M_BREACH: case M_CONFIRM: case M_TEXT: return;
+    case M_BREACH: case M_CONFIRM: case M_TEXT: case M_BREACHGAME: return;
     case M_CARD: if (ui.cardKind == CARD_ARMED || ui.cardKind == CARD_WIPING) return;
                  dismissCard(); return;              // a roll only puts the card away
     case M_DOSSIER: case M_DIAG: case M_ABOUT:
@@ -1686,6 +1805,7 @@ static void onKey(char k) {
     if (k >= 32 && k <= 126 && (int)b.length() < max) { b += k; ui.dirty = true; sfx(SFX_NAV); }
     return;
   }
+  if (ui.modal == M_BREACHGAME) { breachKey(k); return; }   // every key, straight in
   if (k == '\r' || k == '\n') { onSelect(); return; }
   if (k == 0x08 || k == 0x7F) { onBack(); return; }
   char c = (k >= 'A' && k <= 'Z') ? (char)(k - 'A' + 'a') : k;
@@ -1836,6 +1956,13 @@ void tdeckAppBegin() {
   av.mood = cyMood;
   if (!gameConfigured()) { ui.modal = M_SETUP; ui.setupStep = 0; }
   else if (resetArmed) tdeckEvtArmed();          // armed by two short boots
+  uint32_t forfeit = breachPendingTake();
+  if (forfeit && gameConfigured()) {
+    // Switched off in the middle of a breach: it counts as the miss it
+    // would most likely have been. (Its card waits behind any other.)
+    actHackTimed(forfeit, false);
+    toast("Breach cut off by power loss: traced", TT_BAD);
+  }
   sndBegin();
   sfx(SFX_BOOT);
   tdeckKbBacklight(KB_DUTY[tdp.kblight]);
@@ -1858,9 +1985,11 @@ static uint32_t liveSignature() {
   return h;
 }
 
+void prgResync();                                  // cypher32.ino
 void tdeckTick() {
   uint32_t now = millis();
   if (!scr || !scr->getBuffer()) return;
+  prgResync();
 
   // ── input ──
   bool input = false;
@@ -1897,14 +2026,20 @@ void tdeckTick() {
       else                   onNav(0, dy > 0 ? 1 : -1);
     }
   }
-  // Trackball press: counted by the sketch's PRG ISR (same pin, GPIO0).
-  static uint32_t clickSeen = 0;
-  if (clickSeen != prgShortSeq) {
-    clickSeen = prgShortSeq;
+  // Trackball press: counted by the sketch's PRG ISR (same pin, GPIO0). The
+  // breach game reads press edges itself (breachTick); here it is the short
+  // press-and-release that means "select".
+  if (ui.clickSeen != prgShortSeq) {
+    ui.clickSeen = prgShortSeq;
     bool woke = ui.asleep || ui.dimmed;
     wake(); input = true;
-    if (!woke && !resetArmed) onSelect();
+    bool gamePress = ui.gameClosedAt && (uint32_t)(millis() - ui.gameClosedAt) < 5000 &&
+                     (int32_t)(prgPressMs - ui.gameClosedAt) <= 0;
+    if (gamePress) {}                                     // the game already used it
+    else if (!woke && !resetArmed && ui.modal != M_BREACHGAME) onSelect();
   }
+  // The keyboard is polled faster while the ball is moving.
+  tdeckKbFast = (ui.modal == M_BREACHGAME);
   (void)input;
 
   // Handling input takes time (each keyboard read is an I2C transaction) and
@@ -1917,7 +2052,7 @@ void tdeckTick() {
   // ── power ──
   uint16_t tmo = TIMEOUT_S[tdp.timeout];
   uint32_t idle = (int32_t)(now - ui.lastInput) > 0 ? now - ui.lastInput : 0;
-  bool busy = ui.modal == M_RECON || ui.modal == M_BREACH || ui.modal == M_SETUP;
+  bool busy = ui.modal == M_RECON || ui.modal == M_BREACH || ui.modal == M_SETUP || ui.modal == M_BREACHGAME;
   if (!busy && tmo && idle > (uint32_t)tmo * 1000UL && !ui.asleep) {
     ui.asleep = true; av.night = true; tdeckScreenPower(false);
   } else if (!busy && !ui.dimmed && !ui.asleep && idle > 30000UL && (!tmo || tmo > 30)) {
@@ -1933,6 +2068,7 @@ void tdeckTick() {
 
   // ── modal timers ──
   if (ui.modal == M_RECON) reconTick(now);
+  if (ui.modal == M_BREACHGAME) breachTick(now);
   if (ui.modal == M_CARD) {
     if (ui.cardKind == CARD_ARMED && !resetArmed) dismissCard();
     // Let go = cancelled. Read the pin itself: the ISR's debounce can miss
@@ -1977,6 +2113,11 @@ void tdeckTick() {
       pushRect(AV_X, AV_Y, AV_W, AV_H);
     }
   } else if (!av_on) av.step(now);
+
+  // While the breach ball is moving, only its strip is drawn: a full-screen
+  // push is ~40 ms and would stutter the ball. Anything else that changed is
+  // drawn the moment the run ends.
+  if (breachAnimate(now)) return;
 
   if (ui.dirty) {
     ui.dirty = false;

@@ -175,6 +175,9 @@ volatile bool     prgLevelLow  = false;
 volatile uint32_t prgEdgeMs    = 0;
 volatile uint32_t prgEdgeSeq   = 0;
 volatile uint32_t prgPressMs   = 0;   // when the current press started
+volatile uint32_t prgPressSeq  = 0;   // bumped on every press edge — the T-Deck's
+                                      // timing game judges by prgPressMs, the
+                                      // moment the button went down
 volatile uint32_t prgShortSeq  = 0;   // bumped on a qualifying short press
 uint32_t          prgShortSeen = 0;   // last short press loop() acted on
 
@@ -182,14 +185,34 @@ void IRAM_ATTR prgISR() {
   uint32_t now = millis();
   if (now < PRG_BOOT_IGNORE_MS) return;             // DTR/RTS settling
   if (now - prgEdgeMs < PRG_DEBOUNCE_MS) return;    // bounce
-  prgEdgeMs = now;
   bool low = (digitalRead(PRG_PIN) == LOW);
   if (low == prgLevelLow) return;                   // not a real transition
+  // Only an accepted transition restarts the debounce: a bounce that reads
+  // the old level must not swallow the real edge that follows it.
+  prgEdgeMs = now;
   prgLevelLow = low;
-  if (low) { prgPressMs = now; return; }            // press
+  if (low) { prgPressMs = now; prgPressSeq = prgPressSeq + 1; return; }   // press
   // Release. A short press is only a page flip; anything longer is either a
   // reset hold or a deliberate nothing, and both are handled by the poller.
   if (prgPressMs && (now - prgPressMs) < PRG_SHORT_MAX_MS) prgShortSeq = prgShortSeq + 1;
+}
+
+// A jab shorter than the debounce has its release edge ignored, which leaves
+// prgLevelLow stuck LOW, and then the NEXT press reads as "no transition" and
+// is lost. Polled from the loop: once the pin has been HIGH past the debounce,
+// the release is taken as having happened (and counted as the short press it
+// was).
+void prgResync() {
+  if (!prgLevelLow) return;
+  uint32_t now = millis();
+  if (now - prgEdgeMs <= PRG_DEBOUNCE_MS || digitalRead(PRG_PIN) != HIGH) return;
+  noInterrupts();
+  if (prgLevelLow && digitalRead(PRG_PIN) == HIGH) {
+    prgLevelLow = false;
+    prgEdgeMs = now;
+    if (prgPressMs && (now - prgPressMs) < PRG_SHORT_MAX_MS) prgShortSeq = prgShortSeq + 1;
+  }
+  interrupts();
 }
 
 #ifndef BLACK
@@ -284,6 +307,7 @@ void shiftMood(int delta, const char* why) {
 // are defined. The Arduino IDE generates these for you; nothing else does, so
 // writing them out is what lets the sketch be compiled by a plain compiler —
 // which is how test/render_eink.cpp checks it builds at all.
+void          applyHackOutcome(uint32_t target, bool won, int enemyFW, char enemyFac, bool report);
 void          paintCurrentPage();
 void          drawPageDots(int page);
 bool          batteryPresent();
@@ -2138,27 +2162,35 @@ ActResult actReconEnd(uint32_t target, int score) {
 // A real hack is fire-and-forget (instant false): the defender rolls and the
 // verdict arrives through loop()'s resolveHackVerdict(). The training dummy
 // resolves here and now (instant true).
-ActResult actHack(uint32_t target) {
+//
+// The dummy's result, however it was decided: the portal rolls the dice, the
+// T-Deck plays its timing game.
+static ActResult trainingHackResolve(bool won) {
+  int pct = loraHackChancePct(skillBrute, trainScore, skillStealth, TRAIN_FIREWALL);
+  HackResult r = resolveHackOutcome("GREEN", TRAIN_FIREWALL, won);
+  Serial.printf("[TRAIN] seq=%u odds=%d%% -> %s, XP %+d\n",
+                trainScore, pct, r.success ? "WIN" : "LOSS", r.xpDelta);
+  logEvent(r.success ? EV_HACK_WON : EV_HACK_LOST, 0, r.xpDelta);
+  shiftMood(r.success ? +2 : -2, r.success ? "won a hack" : "lost a hack");
+  // Reset the round either way: practice should be repeatable, and there
+  // is no cooldown on a target that does not exist.
+  trainRecon = 0; trainScore = 0;
+  bool lvlUp = applyXP(r.xpDelta);
+  saveProgress();
+  if (r.success) displayHackSuccess("TRAINING", r.xpDelta, r.note);
+  else           displayHackFailed("TRAINING", abs(r.xpDelta), r.note);
+  if (lvlUp) { logEvent(EV_LEVEL, 0, 0); shiftMood(+3, "levelled up");
+               displayLevelUp(); revertIdleAtMs = millis() + 6000; }
+  else                          revertIdleAtMs = millis() + 4000;
+  return actOk(r.success ? "Training breach — you are ready" : "Held off. Try again");
+}
+
+// Every rule that decides whether a hack may start at all, without starting
+// it. The T-Deck asks this before it opens its timing game.
+ActResult actHackCheck(uint32_t target) {
   if (target == TRAINING_ID) {
     if (!trainingActive()) return actErr(400, "Training is over — you levelled up");
-    int pct = loraHackChancePct(skillBrute, trainScore, skillStealth, TRAIN_FIREWALL);
-    bool won = (random(0, 100) < pct);
-    HackResult r = resolveHackOutcome("GREEN", TRAIN_FIREWALL, won);
-    Serial.printf("[TRAIN] seq=%u odds=%d%% -> %s, XP %+d\n",
-                  trainScore, pct, r.success ? "WIN" : "LOSS", r.xpDelta);
-    logEvent(r.success ? EV_HACK_WON : EV_HACK_LOST, 0, r.xpDelta);
-    shiftMood(r.success ? +2 : -2, r.success ? "won a hack" : "lost a hack");
-    // Reset the round either way: practice should be repeatable, and there
-    // is no cooldown on a target that does not exist.
-    trainRecon = 0; trainScore = 0;
-    bool lvlUp = applyXP(r.xpDelta);
-    saveProgress();
-    if (r.success) displayHackSuccess("TRAINING", r.xpDelta, r.note);
-    else           displayHackFailed("TRAINING", abs(r.xpDelta), r.note);
-    if (lvlUp) { logEvent(EV_LEVEL, 0, 0); shiftMood(+3, "levelled up");
-                 displayLevelUp(); revertIdleAtMs = millis() + 6000; }
-    else                          revertIdleAtMs = millis() + 4000;
-    return actOk(r.success ? "Training breach — you are ready" : "Held off. Try again");
+    return actOk("Ready");
   }
   if (!loraReady)  return actErr(503, "Radio offline");
   if (target == 0) return actErr(400, "Bad target");
@@ -2173,8 +2205,56 @@ ActResult actHack(uint32_t target) {
   if (recentlyHacked(nid))  return actErr(400, "Already owned — locked for 12 hours");
   if (recentlyFailed(nid))  return actErr(400, "Locked out — try again later");
   if (loraActionPending())  return actErr(429, "Another action in flight");
-  hackPendingId = nid;
+  return actOk("Ready");
+}
+
+// The classic hack: the defender's device rolls the dice.
+ActResult actHack(uint32_t target) {
+  ActResult ok = actHackCheck(target);
+  if (ok.code != 200) return ok;
+  if (target == TRAINING_ID) {
+    int pct = loraHackChancePct(skillBrute, trainScore, skillStealth, TRAIN_FIREWALL);
+    return trainingHackResolve(random(0, 100) < pct);
+  }
+  KnownNode* n = findNode(target);
+  hackPendingId = chipIdStr(target);
   loraHackStart(target, n->recon_score);
+  return actOk("Breach in progress", /*instant=*/false);
+}
+
+// The timed hack: the T-Deck's timing game has decided it. A hit is sent and
+// resolves when the target answers (instant false), exactly like a dice hack
+// but with the game's result. A miss is a failed hack at once (instant true):
+// XP lost and the 30-minute lock, as the game's rules say — and a T-Deck
+// target is told, so its "held" matches our "lost". Any other device never
+// hears about a miss: it cannot record a timed result, and sending it the
+// request would make it roll dice of its own and possibly log a breach that
+// did not happen.
+//
+// A miss is applied whatever has changed since the game opened — the radio
+// dropping, another action going out, the node leaving range, even a reboot
+// (the T-Deck forfeits an unfinished breach at boot). Otherwise any of those
+// would be a way to take back a miss.
+ActResult actHackTimed(uint32_t target, bool hit) {
+  if (!hit) {
+    if (target == TRAINING_ID) return trainingHackResolve(false);
+    KnownNode* n = findNode(target);
+    if (n && n->tdeck && loraReady && !hackInFlight && !loraActionPending()) {
+      // Tell them, but as a report: our own result is applied here and now.
+      loraHackStart(target, n->recon_score, 0);
+      hackInFlight = false;                  // no verdict to wait for
+      hackTimedOutcome = -1;
+    }
+    int fw = n ? nodeKnownFirewall(n) : -1;
+    applyHackOutcome(target, false, fw < 0 ? 0 : fw, n ? nodeKnownFaction(n) : '?', /*report=*/false);
+    return actOk("Traced", /*instant=*/true);
+  }
+  ActResult ok = actHackCheck(target);
+  if (ok.code != 200) return ok;
+  if (target == TRAINING_ID) return trainingHackResolve(true);
+  KnownNode* n = findNode(target);
+  hackPendingId = chipIdStr(target);
+  loraHackStart(target, n->recon_score, 1);
   return actOk("Breach in progress", /*instant=*/false);
 }
 
@@ -2551,6 +2631,12 @@ void handleApiAction() {
   }
   if (a == "reconend") { apiReply(actReconEnd(target, server.arg("score").toInt())); return; }
   if (a == "hack") {
+#if defined(CYPHER32_TDECK)
+    // On the T-Deck a hack is played, not rolled: the portal cannot be a way
+    // around the breach game.
+    apiReply(actErr(400, "Hack from the T-Deck: X on the target, then stop the ball in the gap"));
+    return;
+#endif
     ActResult r = actHack(target);
     apiReply(r, (r.code == 200 && !r.instant) ? "{\"ok\":true}" : nullptr);
     return;
@@ -2609,13 +2695,25 @@ void resolveHackVerdict() {
   String   nid    = hackPendingId;
   uint32_t target = (uint32_t)strtoul(nid.c_str(), nullptr, 16);
   bool     won    = hackVerdictWon;
-  int      enemyFW = hackVerdictFirewall;
+  // A timed hack (the T-Deck's timing game) is decided by the game, not by
+  // the defender's dice. A T-Deck defender echoes the same result anyway; any
+  // other device rolled its own, which only its own records use.
+  if (hackTimedOutcome >= 0) won = hackTimedOutcome != 0;
+  hackTimedOutcome = -1;
+  applyHackOutcome(target, won, hackVerdictFirewall, hackVerdictFaction, /*report=*/true);
+}
+
+// Everything that follows a hack's outcome, in one place: XP, locks, stats,
+// mood, the log and the screens. report = tell the defender our XP delta
+// (they took part); false for a timed-game miss the target never heard.
+void applyHackOutcome(uint32_t target, bool won, int enemyFW, char enemyFac, bool report) {
+  String nid = chipIdStr(target);
 
   String enemyFaction = "NONE";
-  if      (hackVerdictFaction=='B') enemyFaction="BLACK";
-  else if (hackVerdictFaction=='W') enemyFaction="WHITE";
-  else if (hackVerdictFaction=='R') enemyFaction="RED";
-  else if (hackVerdictFaction=='G') enemyFaction="GREEN";
+  if      (enemyFac=='B') enemyFaction="BLACK";
+  else if (enemyFac=='W') enemyFaction="WHITE";
+  else if (enemyFac=='R') enemyFaction="RED";
+  else if (enemyFac=='G') enemyFaction="GREEN";
 
   // A faction backfire can turn the defender's "you got in" into a loss, so
   // the effective outcome is what resolveHackOutcome() reports — not `won`.
@@ -2631,8 +2729,8 @@ void resolveHackVerdict() {
 
   // Confirm to the defender, carrying our XP delta. They already know the
   // outcome — they decided it — so this is a report, not the notification.
-  if (loraReady) loraSendHackResult(target, effectiveWin,
-                                    (int8_t)constrain(result.xpDelta, -128, 127));
+  if (report && loraReady) loraSendHackResult(target, effectiveWin,
+                                              (int8_t)constrain(result.xpDelta, -128, 127));
 
   Serial.printf("[HACK] %s vs %s fw=%d -> defender said %s -> %s, XP %+d (%s)\n",
                 myFaction.c_str(), enemyFaction.c_str(), enemyFW,
@@ -2907,8 +3005,12 @@ void setup() {
 //  MAIN LOOP
 // ─────────────────────────────────────────────
 
+#if !defined(CYPHER32_TDECK)
+static inline bool breachLive() { return false; }   // the timing game is T-Deck only
+#endif
+
 void loop() {
-  if (portalEnabled()) {
+  if (portalEnabled() && !breachLive()) {
     dnsServer.processNextRequest();
     server.handleClient();
   }
@@ -3006,7 +3108,9 @@ void loop() {
   // Someone hacked US. The alert is raised when their HACK_REQ arrives and we
   // roll the outcome ourselves, so an attacker cannot suppress it by simply
   // never sending a HACK_RESULT.
-  if (pendingHackAlert) {
+  // (Held for the few seconds a breach timing run is live: it writes flash,
+  // which stalls the loop and the ball, and delays the trackball interrupt.)
+  if (pendingHackAlert && !breachLive()) {
     pendingHackAlert = false;
     String who = pendingHackFrom;
     Serial.printf("[HACK] inbound attempt from %s — attacker %s\n",

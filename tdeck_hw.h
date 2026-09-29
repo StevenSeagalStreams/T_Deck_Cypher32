@@ -62,12 +62,6 @@
   #error "Cypher32 T-Deck needs PSRAM: in the Arduino IDE set Tools > PSRAM > OPI PSRAM"
 #endif
 
-#if !defined(ARDUINO_ARCH_ESP32)
-  // Host test build: the few core calls the stubs do not provide.
-  inline void noInterrupts() {}
-  inline void interrupts() {}
-#endif
-
 // ── Hooks the sketch calls into the T-Deck app (tdeck_app.h) ──
 // The sketch's e-ink screens are where every game event already surfaces —
 // a hack verdict, a message, a new node — so on the T-Deck each of those
@@ -170,8 +164,9 @@ bool     tdeckKbPresent = true;
 uint32_t tdeckKbLastPoll = 0;
 uint8_t  tdeckKbMisses = 0;
 
+bool tdeckKbFast = false;              // poll every 4 ms (the breach game)
 char tdeckReadKey() {
-  uint32_t gap = tdeckKbPresent ? 15 : 1000;
+  uint32_t gap = !tdeckKbPresent ? 1000 : tdeckKbFast ? 4 : 15;
   if ((uint32_t)(millis() - tdeckKbLastPoll) < gap) return 0;
   tdeckKbLastPoll = millis();
   // One NACK is a hiccup; three in a row is a keyboard that is not there,

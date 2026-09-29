@@ -158,3 +158,5 @@ struct ESPStub {
 extern ESPStub ESP;
 inline uint32_t esp_random() { return 0x12345678u; }
 inline void delayMicroseconds(uint32_t us) { g_millis += (us + 999) / 1000; }
+inline void noInterrupts() {}   // one thread on the host: nothing to mask
+inline void interrupts() {}

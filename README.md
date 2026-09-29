@@ -71,22 +71,26 @@ should never need this table. It is here anyway.
 | <kbd>Backspace</kbd> | Back / close / erase |
 | <kbd>H</kbd> <kbd>R</kbd> <kbd>I</kbd> <kbd>K</kbd> <kbd>L</kbd> <kbd>O</kbd> | Jump to HOME, RADAR, INBOX, SKILLS, LOG, OPTIONS |
 | <kbd>M</kbd> | Write a message, from anywhere |
-| <kbd>S</kbd> / <kbd>X</kbd> | Scout / hack the highlighted node (X twice: the first shows the odds) |
+| <kbd>S</kbd> / <kbd>X</kbd> | Scout / breach the highlighted node (X twice: the first shows how hard, the second starts the breach) |
 | <kbd>P</kbd> | Ping the highlighted node (round-trip time) |
 | <kbd>B</kbd> | Send a beacon now |
 
 **HOME** is your hacker. The framed line is the move it thinks you should make
 next — scout the practice dummy, spend a skill point, read someone deeper, or
-breach someone whose odds you know — and <kbd>Enter</kbd> does it. <kbd>Space</kbd>
+breach someone you have read — and <kbd>Enter</kbd> does it. <kbd>Space</kbd>
 pokes the avatar. It has opinions about that.
 
 **RADAR** lists everyone in range, loudest first: signal bars, name (or
 `UNKNOWN-xxxx` until you have scouted them), level, range, ten dots of intel,
-and the verdict — your odds, `SCOUT`, `LOCK 4h 12m`, `OWNED`, `BACKDOOR` or
+and the verdict — how hard a breach would be (`EASY` `FAIR` `HARD` `BRUTAL`), `SCOUT`, `LOCK 4h 12m`, `OWNED`, `BACKDOOR` or
 `IMMUNE`. The bar across the top is the faction census. Echoes — people only a
 neighbour can hear — are listed underneath; you can only mail them.
 <kbd>Enter</kbd> opens a node's **dossier**: everything recon has revealed, your
-attempts left, your odds, and why anything is greyed out.
+attempts left, the breach you would face (the gap and its window), and why
+anything is greyed out.
+
+**BREACH** is the hack itself: stop the ball in the gap. See
+[the breach](#the-breach-the-timing-game-that-decides-a-hack).
 
 **RECON** is the original sequence-memory game with the original rules: tiles
 flash, you repeat them, each round adds one, one wrong tile ends the run, and
@@ -112,7 +116,7 @@ typing: they wait, then come up one at a time.
 
 <table>
 <tr>
-<td><img src="docs/img/tdeck/tdeck-dossier.png" alt="A dossier: codename, faction, level, brute, stealth and firewall revealed, backdoor still locked, three recon attempts left, 70% odds, and SCOUT HACK MESSAGE PING buttons"></td>
+<td><img src="docs/img/tdeck/tdeck-dossier.png" alt="A dossier: codename, faction, level, brute, stealth and firewall revealed, backdoor still locked, three recon attempts left, the breach grade, and SCOUT HACK MESSAGE PING buttons"></td>
 <td><img src="docs/img/tdeck/tdeck-card-levelup.png" alt="LEVEL UP: the avatar with arms raised in a ring of sparks beside a LEVEL UP card"></td>
 </tr>
 <tr>
@@ -341,9 +345,13 @@ One **Skill Point** per level-up. Spend it in the **Skills** tab. At high levels
 
 | Skill | Effect |
 |-------|--------|
-| **Brute Force** | +2% hit chance per point over the target's Firewall |
-| **Stealth** | +1% hit chance per point — and Firewall can't cancel it |
-| **Firewall** | Cuts XP lost when your hack fails (floor 5), and blunts Brute Force aimed at you |
+| **Brute Force** | Widens the gap when you breach someone. When you are breached, it blunts the attacker's Stealth |
+| **Stealth** | Narrows the gap for anyone breaching *you*. When you breach, it counters the target's Brute Force |
+| **Firewall** | Makes the ball run faster for anyone breaching you (and slower when you breach a weaker firewall). Cuts XP lost when your hack fails (floor 5) |
+
+Every point carries the same total weight, split between attack and defence
+differently for each skill, so there is no dead stat and no single build that
+wins everything. See [the breach](#the-breach-the-timing-game-that-decides-a-hack).
 
 Cap: **35** per skill (3 from faction + 32 earned through levels).
 
@@ -393,14 +401,15 @@ moment the round does, while you are still playing:
 | 6 | their **level** |
 | 7 | their **Brute Force** |
 | 8 | their **Stealth** |
-| 9 | their **Firewall** — the Radar stops saying "odds unknown" |
+| 9 | their **Firewall** |
 | 10 | a **backdoor** |
 
 <br clear="all">
 
-The furthest round you complete is also your recon score, worth `score × 1.5%`
-on your hack odds — a perfect run gives the full **+15%**, putting a level
-starting hack at **75%**.
+The furthest round you complete is also your recon score, and it widens the
+breach: **+3% on the time the ball spends in the gap per round** — a perfect
+10 gives **+30%**. And every stat recon reveals stops being a worst-case guess
+(see below), so scouting only ever makes a breach easier.
 
 One wrong tile ends the run. Everything you already pulled is yours to keep;
 the rest stays dark.
@@ -421,17 +430,17 @@ Two things identify someone for free, because they identified themselves:
 **sending you a message**, and **attacking you**. Neither hands out the odds
 bonus — that is only ever earned by playing.
 
-**3. Hack.**  
-One attempt. One roll — made by *their* device, not yours, so nobody can modify
-their firmware to declare themselves the winner. The result appears on both
-displays. They find out the moment your request lands, whether or not you tell
-them how it went.
+**3. Breach.**  
+One attempt, played as [the breach](#the-breach-the-timing-game-that-decides-a-hack):
+stop the ball in the gap. Hit and your request goes out; the target finds out
+the moment it lands. Miss and you are traced on the spot — a failed hack. (A
+Heltec target still rolls its own dice for its own records; see below.)
 
 **4. Win** — the node is yours and locked for **12 hours**.
 
-**5. Lose** — locked out of that node for **12 hours**. Move on.
+**5. Lose** — locked out of that node for **30 minutes**. Move on.
 
-Either way the node closes for 12 hours. When that ends, recon resets too: three
+A win closes the node for 12 hours. When that ends, recon resets too: three
 fresh attempts and a clean slate on the sequence bonus — and everything you knew
 about them goes dark again, unless you took the backdoor.
 
@@ -454,24 +463,76 @@ happens at a meet-up is negotiated in 32-character bursts.
 
 <br clear="all">
 
-**Hit chance** — one roll, made on the defender's device:
+### The breach: the timing game that decides a hack
+
+<img src="docs/img/tdeck/tdeck-breach-run.png" width="320" align="right" alt="The breach: a thin line with a thick gap on it, a ball racing along it, the three stat contests above, and the gap, speed and window below">
+
+A thin line with a thick stretch on it — the gap in their defences. A ball runs
+from end to end; press the **trackball** (or <kbd>Space</kbd>) to stop it.
+Stop it in the gap and you are in. Miss, or let six passes go by, and you are
+traced: XP lost and a 30-minute lock.
+
+**Your stats and theirs shape it:**
+
+- your **Brute Force** makes the gap longer; their **Stealth** makes it shorter
+- their **Firewall** makes the ball faster; yours slows it down
+- your **Stealth** against their **Brute Force** nudges the gap too
+- every recon round adds 3% to the time the ball spends in the gap
+
+What decides how hard a breach is, is one number: **how long the ball spends
+inside the gap on each pass** — the *window*. The screen shows it before you
+press, with a grade, and so do the dossier and the radar:
+
+| Grade | Window | A typical player hits about |
+|-------|--------|------------------------------|
+| **EASY** | 91 ms and up | 75% or more |
+| **FAIR** | 65–90 ms | 60–75% |
+| **HARD** | 45–64 ms | 45–60% |
+| **BRUTAL** | under 45 ms | less — but a sharp player still can |
+
 ```
-base 60%
-+ 1.5% per recon sequence step   (max +15% at a perfect 10)
-+ 2% per point of Brute Force over their Firewall
-+ 1% per point of Stealth       (firewall cannot cancel this)
-floor: 25%   ceiling: 90%
+window = 65 ms × e^(1.75 × (your BRUTE − their STEALTH) / K)
+               × e^(1.05 × (your STEALTH − their BRUTE) / K)
+               ÷ e^(1.40 × (their FIREWALL − your FIREWALL) / K)
+               × (1 + 3% per recon round)          held within 30–100 ms
+speed  = 450 px/s × e^(1.40 × (their FIREWALL − your FIREWALL) / K)
+gap    = window × speed
+K      = 6 + every skill point both of you own
 ```
 
-Brute is contested: it is measured against their Firewall, so it swings hard
-both ways and is the stat for cracking hard targets. Stealth is uncontested and
-worth half as much per point, but no Firewall can cancel it — the reliable
-investment. Recon is the lever you pull per target — and by round 9 it stops
-being a bonus and starts being information: their Firewall in hand means the
-Radar shows your real odds before you commit instead of "unknown".
+**It scales forever.** Only stat *differences measured against all the points
+in play* count, so a point is worth the same share of a fight at level 32 as at
+level 3, and the same wherever you put it. Two equal players get the same
+window whether they are both level 1 or both level 32, and a level 27 against a level 32 is as up against it as a 5
+against a 6. No way of spending your points pulls ahead as the levels climb.
 
-No guarantee. Never 100%. RED and GREEN carry their own backfire risks on top,
-so their effective win rate is lower than the number shown.
+**Not scouting is never a shortcut.** Levels are public (every beacon carries
+one), so a player's total points are known. Any stat recon has not revealed is
+assumed to be spread in whatever way would make *this* breach hardest (within
+what their faction, once scouted, guarantees) — so each
+round of recon can only make the breach easier or leave it as it was.
+
+**The controls are judged by the clock, not the screen.** The trackball press
+is timestamped by an interrupt the instant it goes down, and the ball's
+position is a pure function of time, so a busy frame can never move the ball
+under your finger. The judgement also allows for the display's own delay, and
+the keyboard's (the trackball is the precise control). After each press the
+screen tells you how many milliseconds early or late you were.
+
+**The practice dummy** gives a kinder gap, so a new player can learn the rhythm
+before it counts.
+
+**Against a Heltec device** the timing game still decides it on your side: a
+hit is a won hack for you. The Heltec cannot play the game, so it rolls its own
+dice for its own records (the old formula: `60% + 1.5% per recon step + 2% per
+Brute over their Firewall + 1% per Stealth`, 25–90%). A miss is never sent to a
+Heltec at all. Between two T-Decks the defender honours the game's result — as
+long as the attacker's own locks would have allowed the try — so both screens
+always agree.
+
+RED and GREEN carry their own backfire risks on top of any breach.
+
+<br clear="all">
 
 ---
 
@@ -659,7 +720,7 @@ cd test && make shots    # regenerate every image in docs/img
 | `layout` | The page in real Chromium at five phone sizes — nothing off-screen, nothing unreachable |
 | `flasher` | The browser installer page in real Chromium — the profile picker, the browser gate, a blocked CDN |
 | `qr` | The encoder against `python-qrcode`, then the result decoded by OpenCV |
-| `tdeck` | **The T-Deck edition, played on the PC**: the real sketch and app with the real Adafruit GFX, driven by scripted keys and trackball — setup, recon, hacking, skills, messages, cards, power saving (61 checks) — and every screen saved |
+| `tdeck` | **The T-Deck edition, played on the PC**: the real sketch and app with the real Adafruit GFX, driven by scripted keys and trackball — setup, recon, the breach timing game and its balance, skills, messages, cards, power saving (110 checks) — and every screen saved |
 
 **The firmware is compiled for the real chip in CI.** `.github/workflows/firmware.yml`
 builds all three range profiles for the T-Deck with PlatformIO on every push,
