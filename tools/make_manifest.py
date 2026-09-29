@@ -125,7 +125,7 @@ def main() -> int:
     # The app partition from default_16MB.csv (the T-Deck layout). Worth
     # stating as a percentage: a build creeping towards the partition size is
     # the kind of thing nobody notices until an image silently stops fitting.
-    APP_PARTITION = 0x640000
+    APP_PARTITION = 0x300000          # app3M_fat9M_16MB, as the Arduino IDE builds it
 
     table = ["| profile | image | application | of %.2f MB app partition |"
              % (APP_PARTITION / 1048576.0),

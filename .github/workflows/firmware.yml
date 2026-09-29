@@ -5,8 +5,9 @@
 # catches a great deal, but it cannot catch anything that depends on the real
 # toolchain, the real Arduino core, or the real libraries. This job does.
 #
-# It also produces what the flasher needs: one merged image per range profile,
-# with the offsets taken from PlatformIO rather than guessed.
+# It also produces what the flasher needs: one image per range profile, built
+# the way the Arduino IDE builds it (the toolchain players have run on real
+# T-Decks), and publishes the installer page from the default branch.
 name: firmware
 
 on:
@@ -53,7 +54,15 @@ jobs:
     # type" in the IDE while building fine everywhere else — which is exactly
     # how a broken build once reached a player. This builds the sketch the
     # way the IDE does, with the settings the README tells people to use.
+    #
+    # The web installer ships these images, one per range profile: the same
+    # toolchain and settings people use from the IDE, so what the browser
+    # writes is what is known to boot on a T-Deck.
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [fast, long, epic]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -80,10 +89,23 @@ jobs:
           arduino-cli lib install RadioLib "Adafruit GFX Library" "Adafruit ST7735 and ST7789 Library"
       - name: Build as the Arduino IDE does (ESP32S3 Dev Module, OPI PSRAM, 16 MB)
         run: |
+          cp cypher32/tools/web_image.py "$RUNNER_TEMP/"
           rm -rf cypher32/test
+          profile=$(echo "${{ matrix.profile }}" | tr a-z A-Z)
           arduino-cli compile --fqbn \
             "esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,CDCOnBoot=cdc" \
-            cypher32
+            --build-property "compiler.cpp.extra_flags=-DLORA_PROFILE=LORA_PROFILE_$profile" \
+            --output-dir build cypher32
+          # The profile really is the one asked for (a build property that
+          # silently failed to apply would ship LONG under every name).
+          strings build/cypher32.ino.bin | grep -qx "$profile"
+      - name: Image for the web installer
+        run: python3 "$RUNNER_TEMP/web_image.py" --build build --profile ${{ matrix.profile }} --dest web-image
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cypher32-${{ matrix.profile }}
+          path: web-image/
+          if-no-files-found: error
 
   build:
     runs-on: ubuntu-latest
@@ -123,16 +145,18 @@ jobs:
             >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
+      # Kept as a second, independent toolchain check and for esptool users;
+      # the web installer publishes the Arduino IDE builds above.
       - uses: actions/upload-artifact@v4
         with:
-          name: cypher32-${{ matrix.profile }}
+          name: pio-${{ matrix.profile }}
           path: |
             .pio/build/${{ matrix.profile }}/cypher32-${{ matrix.profile }}.bin
             .pio/build/${{ matrix.profile }}/parts-${{ matrix.profile }}.json
           if-no-files-found: error
 
   site:
-    needs: [build, host-tests]
+    needs: [arduino-ide, build, host-tests]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -176,7 +200,9 @@ jobs:
     # does that this job fails and the firmware build above still succeeds,
     # with the flasher downloadable as an ordinary artifact.
     needs: site
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    # Published from the repository's default branch (and on demand), so the
+    # installer always carries the firmware people are actually getting.
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       pages: write
