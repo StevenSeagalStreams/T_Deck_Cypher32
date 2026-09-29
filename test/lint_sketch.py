@@ -79,6 +79,9 @@ for f in sources:
         name = m.group(1)
         if name in defined:                              continue
         if name.startswith(PLATFORM_PREFIXES):           continue
+        # A member (http.POST, WiFi.SSID(i), p->RSSI) is not a macro or a
+        # constant and cannot be "undeclared" in the sense this checks.
+        if re.search(r"(\.|->)\s*$", body[max(0, m.start() - 3):m.start()]): continue
         line = body[:m.start()].count("\n") + 1
         problems.append(f"{f.name}:{line}: '{name}' is used but never defined")
 

@@ -2244,6 +2244,7 @@ ActResult actHackTimed(uint32_t target, bool hit) {
       loraHackStart(target, n->recon_score, 0);
       hackInFlight = false;                  // no verdict to wait for
       hackTimedOutcome = -1;
+      if (loraFightHook) loraFightHook('L', target, hackReqSeq);
     }
     int fw = n ? nodeKnownFirewall(n) : -1;
     applyHackOutcome(target, false, fw < 0 ? 0 : fw, n ? nodeKnownFaction(n) : '?', /*report=*/false);
@@ -2700,6 +2701,7 @@ void resolveHackVerdict() {
   // other device rolled its own, which only its own records use.
   if (hackTimedOutcome >= 0) won = hackTimedOutcome != 0;
   hackTimedOutcome = -1;
+  if (loraFightHook) loraFightHook(won ? 'W' : 'L', target, hackReqSeq);
   applyHackOutcome(target, won, hackVerdictFirewall, hackVerdictFaction, /*report=*/true);
 }
 
@@ -2890,6 +2892,10 @@ void serviceFactoryResetButton() {
 void setup() {
   Serial.begin(115200);
   delay(100);
+  // Which range profile this image was built for, in one literal the
+  // compiler cannot fold into another string: CI reads it back out of the
+  // binary to check each web-installer image is the profile it is named for.
+  Serial.println("[BOOT] c32-profile=" PROFILE_NAME);
 
   // The panel refresh busy-waits ~2 s and handleApiPing() spins up to 3.5 s;
   // if both land in one pass that is 5.5 s against the default 5 s task

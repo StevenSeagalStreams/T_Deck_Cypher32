@@ -46,6 +46,10 @@ def main() -> int:
 
     os.makedirs(args.out, exist_ok=True)
     shutil.copy(args.page, os.path.join(args.out, "index.html"))
+    # The world scoreboard, published beside the installer.
+    board = os.path.join(os.path.dirname(args.page), "board.html")
+    if os.path.isfile(board):
+        shutil.copy(board, os.path.join(args.out, "board.html"))
 
     # The board check imports this from our own origin rather than a CDN, so a
     # blocked or slow third party cannot stop someone confirming what they are
@@ -111,7 +115,7 @@ def main() -> int:
 
     # A flasher that quietly serves a stale or missing binary is worse than one
     # that is plainly broken, so refuse to publish a half-assembled site.
-    expected = ["index.html", "build-info.json"]
+    expected = ["index.html", "board.html", "build-info.json"]
     if args.esptool:
         expected.append("esptool.js")
     for profile in PROFILES:

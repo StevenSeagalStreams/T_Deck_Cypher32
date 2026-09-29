@@ -88,6 +88,8 @@ static uint32_t breachPendingTake() {
   return id;
 }
 
+#include "tdeck_net.h"
+
 // The web portal and its Wi-Fi are off unless asked for: the T-Deck does not
 // need a phone, and the access point is the biggest drain on the battery.
 bool tdeckPortalEnabled() { return tdp.portal != 0; }
@@ -228,7 +230,8 @@ static String fmtLeft(unsigned long ms) {
 // ─────────────────────────────────────────────
 enum Tab   : uint8_t { T_HOME, T_RADAR, T_INBOX, T_SKILLS, T_LOG, T_OPTS, T_COUNT };
 enum Modal : uint8_t { M_NONE, M_SETUP, M_DOSSIER, M_RECON, M_COMPOSE, M_CONFIRM,
-                       M_CARD, M_TEXT, M_DIAG, M_BREACH, M_ABOUT, M_BREACHGAME };
+                       M_CARD, M_TEXT, M_DIAG, M_BREACH, M_ABOUT, M_BREACHGAME,
+                       M_WORLD, M_WIFI };
 static const char* TAB_NAME[T_COUNT] = { "HOME", "RADAR", "INBOX", "SKILLS", "LOG", "OPTIONS" };
 static const char  TAB_KEY[T_COUNT]  = { 'h', 'r', 'i', 'k', 'l', 'o' };
 
@@ -251,7 +254,7 @@ struct UI {
   uint32_t selId = 0; bool selEcho = false;
   // confirm / text entry
   uint8_t  confirmWhat = 0; String confirmMsg;
-  uint8_t  textWhat = 0; String textPrompt, textBuf;
+  uint8_t  textWhat = 0; String textPrompt, textBuf, textSsid;
   // setup
   uint8_t  setupStep = 0, setupFac = 0;
   // breach
@@ -271,7 +274,7 @@ struct UI {
 Avatar av;
 enum { CARD_INFO, CARD_ARMED, CARD_WIPING, CARD_MSG, CARD_RESULT, CARD_LEVEL };
 enum { CONF_HACK, CONF_CLEAR, CONF_PORTAL, CONF_SKILL };
-enum { TXT_PASSWORD, TXT_WIPE, TXT_PORTAL };
+enum { TXT_PASSWORD, TXT_WIPE, TXT_PORTAL, TXT_WIFIPASS };
 
 // Avatar rectangles: where it lives on HOME, on a result card and in setup.
 #define AV_X 6
@@ -306,6 +309,8 @@ static void say(const String& s) { ui.bubble = s; ui.bubbleAt = millis(); ui.dir
 
 // Anything that should be seen wakes the screen.
 static void render(uint32_t now);
+static void drawWorld(uint32_t now);
+static void drawWifi();
 static void pushAll();
 static void wake() {
   ui.lastInput = millis();
@@ -344,7 +349,7 @@ uint8_t  cardQn = 0;
 static bool cardBusy() {
   uint8_t m = ui.modal;
   return m == M_RECON || m == M_COMPOSE || m == M_TEXT || m == M_CONFIRM || m == M_SETUP || m == M_CARD ||
-         m == M_BREACHGAME;
+         m == M_BREACHGAME || m == M_WIFI;
 }
 static void reconClose();
 static void showCard(const Card& c) {
@@ -1324,7 +1329,7 @@ static void drawLog() {
 }
 
 // Options: label, value.
-enum { O_THEME, O_SOUND, O_BRIGHT, O_TIMEOUT, O_KBL, O_BEACON, O_DIAG, O_PORTAL, O_PASSWORD, O_CLEAR, O_ABOUT, O_RESET, O_COUNT };
+enum { O_THEME, O_SOUND, O_BRIGHT, O_TIMEOUT, O_KBL, O_BEACON, O_WORLD, O_DIAG, O_PORTAL, O_PASSWORD, O_CLEAR, O_ABOUT, O_RESET, O_COUNT };
 static String optValue(int i) {
   switch (i) {
     case O_THEME:   return PAL.name;
@@ -1334,11 +1339,12 @@ static String optValue(int i) {
     case O_KBL:     return KB_TXT[tdp.kblight];
     case O_PORTAL:  return tdp.portal ? "ON" : "OFF";
     case O_PASSWORD:return tdp.portal ? myPassword : String("(portal off)");
+    case O_WORLD:   return !net.on ? String("OFF") : (net.everOk && net.rank) ? "#" + String(net.rank) : String("ON");
     default:        return ">";
   }
 }
 static const char* OPT_NAME[O_COUNT] = { "Theme", "Sound", "Brightness", "Screen off after", "Keyboard light",
-  "Send beacon now", "Radio diagnostics", "Phone portal (Wi-Fi)", "Portal password",
+  "Send beacon now", "World board (online)", "Radio diagnostics", "Phone portal (Wi-Fi)", "Portal password",
   "Forget nodes in range", "About this device", "Factory reset" };
 static void drawOptions() {
   int& sel = ui.sel[T_OPTS];
@@ -1406,7 +1412,8 @@ static void drawText() {
   String L[2]; int n = wrap(ui.textPrompt, 42, L, 2);
   for (int i = 0; i < n; i++) txtC(160, 80 + i * 11, L[i], PAL.fg);
   GR.drawRoundRect(34, 110, 252, 24, 4, PAL.line);
-  txt(40, 114, ui.textBuf + (((millis() / 500) & 1) ? "_" : " "), PAL.accent, 2);
+  String shown = ui.textBuf.length() > 18 ? "<" + ui.textBuf.substring(ui.textBuf.length() - 17) : ui.textBuf;
+  txt(40, 114, shown + (((millis() / 500) & 1) ? "_" : " "), PAL.accent, 2);
   drawHint("type  ENTER ok  BKSP erase / cancel");
 }
 
@@ -1518,6 +1525,8 @@ static void render(uint32_t now) {
     case M_TEXT:    drawText(); break;
     case M_CARD:    drawCard(now); break;
     case M_DIAG:    drawDiag(); break;
+    case M_WORLD:   drawWorld(now); break;
+    case M_WIFI:    drawWifi(); break;
     case M_ABOUT:   drawAbout(); break;
     case M_BREACH:  drawBreach(now); break;
     case M_BREACHGAME: drawBreachGame(now); break;
@@ -1557,6 +1566,137 @@ static void closeModal() {
   ui.dirty = true; sfx(SFX_BACK);
 }
 
+// ─────────────────────────────────────────────
+//  WORLD BOARD (tdeck_net.h does the talking)
+// ─────────────────────────────────────────────
+#define WL_MAX 16
+struct WifiList { int n = -1; int sel = 0; String ssid[WL_MAX]; int rssi[WL_MAX]; bool open[WL_MAX]; } wl;
+static int worldLastRank = 0;
+
+static void worldOpen() { ui.modal = M_WORLD; ui.dirty = true; sfx(SFX_CLICK); }
+static void worldSync() {
+  if (!netConfigured()) { toast("Pick a Wi-Fi network first: W", TT_DIM); sfx(SFX_ERR); return; }
+  if (net.state == NS_WIFI || net.state == NS_SYNC) { toast("Already syncing", TT_DIM); return; }
+  if (!net.on) { net.on = true; netSaveSettings(); }
+  netRequest(myChipID32, myName, myFaction, myLevel, myXP);
+  ui.dirty = true; sfx(SFX_SEND);
+}
+static void worldToggle() {
+  if (!netConfigured()) { toast("Pick a Wi-Fi network first: W", TT_DIM); sfx(SFX_ERR); return; }
+  if (net.state == NS_WIFI || net.state == NS_SYNC) { toast("Syncing: a moment", TT_DIM); return; }
+  net.on = !net.on; netSaveSettings();
+  if (net.on) worldSync();
+  else { net.state = NS_OFF; toast("World board off: nothing is sent", TT_DIM); }
+  ui.dirty = true; sfx(SFX_CLICK);
+}
+static void wifiOpen() {
+  if (net.state == NS_WIFI || net.state == NS_SYNC || !netScanStart()) { toast("Busy syncing, try again", TT_DIM); return; }
+  wl.n = -1; wl.sel = 0; ui.modal = M_WIFI; ui.dirty = true; sfx(SFX_CLICK);
+}
+// Collect the scan once it finishes: strongest first, each name once.
+static void wifiPoll() {
+  if (ui.modal != M_WIFI || wl.n >= 0) return;
+  int n = netScanDone();
+  if (n < 0) return;
+  wl.n = 0;
+  for (int i = 0; i < n && wl.n < WL_MAX; i++) {
+    String s = netScanSsid(i);
+    if (!s.length()) continue;                 // hidden networks
+    bool dup = false;
+    for (int k = 0; k < wl.n; k++) if (wl.ssid[k] == s) dup = true;
+    if (dup) continue;
+    wl.ssid[wl.n] = s; wl.rssi[wl.n] = netScanRssi(i); wl.open[wl.n] = netScanOpen(i); wl.n++;
+  }
+  for (int a = 0; a < wl.n; a++)                 // few enough for a simple sort
+    for (int b = a + 1; b < wl.n; b++)
+      if (wl.rssi[b] > wl.rssi[a]) {
+        String s = wl.ssid[a]; wl.ssid[a] = wl.ssid[b]; wl.ssid[b] = s;
+        int r = wl.rssi[a]; wl.rssi[a] = wl.rssi[b]; wl.rssi[b] = r;
+        bool o = wl.open[a]; wl.open[a] = wl.open[b]; wl.open[b] = o;
+      }
+  netScanEnd();
+  ui.dirty = true;
+}
+static void wifiUse(const String& ssid, const String& pass) {
+  netLock(); net.ssid = ssid; net.pass = pass; net.on = true; netUnlock();
+  netSaveSettings();
+  ui.modal = M_WORLD; ui.dirty = true;
+  toast("Saved. Connecting...", TT_GOOD);
+  netRequest(myChipID32, myName, myFaction, myLevel, myXP);
+}
+static void wifiPick() {
+  if (wl.n <= 0) { if (wl.n == 0) { wl.n = -1; netScanStart(); ui.dirty = true; } return; }   // rescan
+  ui.textSsid = wl.ssid[wl.sel];
+  if (wl.open[wl.sel]) { wifiUse(ui.textSsid, ""); return; }
+  askText(TXT_WIFIPASS, "Password for " + clip(ui.textSsid, 26));
+}
+
+static void drawWorld(uint32_t now) {
+  panel(2, 32, 316, 192, PAL.accent);
+  txt(10, 38, "WORLD BOARD", PAL.accent, 2);
+  uint8_t st = net.state;
+  static const char* SPIN = "|/-\\";
+  String s; uint16_t sc = PAL.dim;
+  if (!netConfigured())      { s = "Not set up. Press W to pick a Wi-Fi network."; sc = PAL.warn; }
+  else if (!net.on)          { s = "Off: nothing is sent. O switches it on."; }
+  else if (st == NS_WIFI)    { s = String(SPIN[(now / 150) % 4]) + " Joining " + clip(net.ssid, 20) + "..."; sc = PAL.fg; }
+  else if (st == NS_SYNC)    { s = String(SPIN[(now / 150) % 4]) + " Talking to the board..."; sc = PAL.fg; }
+  else if (st == NS_FAIL)    { netLock(); s = clip(net.err, 50); netUnlock(); sc = PAL.bad; }
+  else if (net.everOk)       { s = "Synced " + fmtAge(ageMs(net.lastOkMs)) + " ago via " + clip(net.ssid, 16); }
+  else                       { s = "On. Syncs every 15 min and after fights."; }
+  txt(10, 58, s, sc);
+  int y = 70;
+  if (net.everOk) {
+    txt(10, y, "You: #" + String(net.rank) + " of " + String(net.players), PAL.fg);
+    txtR(310, y, String(net.score) + " pts  " + String(net.breaches) + (net.breaches == 1 ? " breach  " : " breaches  ") +
+                 String(net.holds) + (net.holds == 1 ? " hold" : " holds"), PAL.accent);
+    y += 11;
+  }
+  if (net.qn) { txt(10, y, String(net.qn) + (net.qn == 1 ? " fight" : " fights") + " waiting to go up", PAL.dim); y += 11; }
+  y += 3;
+  GR.drawFastHLine(8, y, 304, PAL.line); y += 4;
+  NetRow top[10]; int topN;                        // a copy: the sync task writes these
+  netLock(); topN = net.topN; memcpy(top, net.top, sizeof(NetRow) * topN); netUnlock();
+  if (!topN) {
+    txtC(160, y + 30, net.everOk ? "Nobody has scored yet. Go and breach someone." :
+                                   "The top ten shows here after the first sync.", PAL.dim);
+  }
+  String me = myName;
+  for (int i = 0; i < topN; i++) {
+    const NetRow& r = top[i];
+    bool mine = me == r.n;
+    if (mine) GR.fillRect(6, y - 1, 308, 11, PAL.panel);
+    txt(10, y, "#" + String(r.r), mine ? PAL.accent : PAL.dim);
+    GR.fillRect(38, y + 1, 4, 7, facCol(r.f));
+    txt(46, y, r.n, mine ? PAL.accent : PAL.fg);
+    txt(170, y, "LV" + String(r.l), PAL.dim);
+    txtR(310, y, String(r.s) + " pts", mine ? PAL.accent : PAL.fg);
+    y += 11;
+  }
+  txt(10, 206, "stevenseagalstreams.github.io/T_Deck_Cypher32", PAL.line);
+  drawHint("W wi-fi  O on/off  ENTER sync now  BKSP back");
+}
+
+static void drawWifi() {
+  panel(2, 32, 316, 192, PAL.accent);
+  txt(10, 38, "PICK A WI-FI NETWORK", PAL.accent);
+  txt(10, 50, "Only the board uses it, seconds at a time.", PAL.dim);
+  if (wl.n < 0) { txtC(160, 120, "Scanning...", PAL.fg); drawHint("BKSP back"); return; }
+  if (wl.n == 0) { txtC(160, 120, "No networks found. ENTER to scan again.", PAL.warn); drawHint("ENTER rescan  BKSP back"); return; }
+  const int VIS = 11, TOP = 66;
+  int sc = wl.sel >= VIS ? wl.sel - VIS + 1 : 0;
+  for (int i = sc; i < wl.n && i < sc + VIS; i++) {
+    int y = TOP + (i - sc) * 13;
+    bool on = i == wl.sel;
+    if (on) GR.drawRoundRect(6, y - 2, 308, 13, 3, PAL.accent);
+    int bars = wl.rssi[i] > -55 ? 4 : wl.rssi[i] > -67 ? 3 : wl.rssi[i] > -78 ? 2 : 1;
+    for (int b = 0; b < 4; b++) GR.fillRect(12 + b * 4, y + 7 - b * 2, 3, 2 + b * 2, b < bars ? PAL.accent : PAL.line);
+    txt(34, y, clip(wl.ssid[i], 36), on ? PAL.fg : PAL.dim);
+    txtR(308, y, wl.open[i] ? "open" : "locked", wl.open[i] ? PAL.warn : PAL.dim);
+  }
+  drawHint("^v choose  ENTER pick  BKSP back");
+}
+
 static void optionChange(int i) {
   switch (i) {
     case O_THEME:   tdp.theme = (tdp.theme + 1) % 4; break;
@@ -1567,6 +1707,7 @@ static void optionChange(int i) {
     case O_BEACON:  if (!loraReady) { toast("Radio offline", TT_BAD); return; }
                     loraSendBeacon(); toast("Beacon sent", TT_GOOD); sfx(SFX_SEND); return;
     case O_DIAG:    ui.modal = M_DIAG; ui.dirty = true; return;
+    case O_WORLD:   worldOpen(); return;
     case O_ABOUT:   ui.modal = M_ABOUT; ui.dirty = true; return;
     case O_PORTAL:  confirm(CONF_PORTAL, tdp.portal ? "Turn the phone portal OFF? The device restarts."
                                                     : "Turn the phone portal ON? It opens a Wi-Fi network (uses more battery). The device restarts.");
@@ -1608,6 +1749,10 @@ static void doText() {
     tdp.portal = 1; tdeckSavePrefs();
     ui.modal = M_NONE; ui.dirty = true;
     toast("Portal on. Restarting...", TT_WARN); requestRestart(800);
+  } else if (ui.textWhat == TXT_WIFIPASS) {
+    unsigned n = ui.textBuf.length();
+    if (n != 5 && n != 13 && n < 8) { toast("Wi-Fi passwords are 8 to 63 characters", TT_BAD); sfx(SFX_ERR); return; }
+    wifiUse(ui.textSsid, ui.textBuf);
   } else if (ui.textWhat == TXT_WIPE) {
     String t = ui.textBuf; t.toUpperCase();
     if (t != "WIPE") { toast("Not wiped", TT_DIM); ui.modal = M_NONE; ui.dirty = true; return; }
@@ -1683,6 +1828,8 @@ static void onSelect() {
     case M_DOSSIER: nodeAction('s', ui.target, ui.targetEcho); return;
     case M_DIAG: case M_ABOUT: closeModal(); return;
     case M_BREACH: return;
+    case M_WORLD: worldSync(); return;
+    case M_WIFI:  wifiPick(); return;
   }
   switch (ui.tab) {
     case T_HOME: {
@@ -1734,12 +1881,14 @@ static void onBack() {
       return;
     case M_TEXT:
       if (ui.textBuf.length()) { ui.textBuf.remove(ui.textBuf.length() - 1); ui.dirty = true; }
+      else if (ui.textWhat == TXT_WIFIPASS) { ui.modal = M_WIFI; ui.dirty = true; sfx(SFX_BACK); }
       else closeModal();
       return;
     case M_CARD:
       if (ui.cardKind == CARD_ARMED || ui.cardKind == CARD_WIPING) return;
       dismissCard(); return;
     case M_BREACH: return;
+    case M_WIFI: netScanEnd(); ui.modal = M_WORLD; ui.dirty = true; sfx(SFX_BACK); return;
     case M_NONE: if (ui.tab != T_HOME) gotoTab(T_HOME); return;
     default: closeModal(); return;
   }
@@ -1762,7 +1911,10 @@ static void onNav(int dx, int dy) {
     case M_BREACH: case M_CONFIRM: case M_TEXT: case M_BREACHGAME: return;
     case M_CARD: if (ui.cardKind == CARD_ARMED || ui.cardKind == CARD_WIPING) return;
                  dismissCard(); return;              // a roll only puts the card away
-    case M_DOSSIER: case M_DIAG: case M_ABOUT:
+    case M_WIFI:
+      if (dy && wl.n > 0) { wl.sel = (wl.sel + wl.n + dy) % wl.n; ui.dirty = true; sfx(SFX_NAV); }
+      return;
+    case M_DOSSIER: case M_DIAG: case M_ABOUT: case M_WORLD:
       if (dx) { ui.modal = M_NONE; ui.target = 0; }
       else return;
       break;
@@ -1801,7 +1953,7 @@ static void onKey(char k) {
     if (k == '\r' || k == '\n') { onSelect(); return; }
     if (k == 0x08 || k == 0x7F)  { onBack(); return; }
     String& b = (ui.modal == M_COMPOSE) ? cm.text : ui.textBuf;
-    int max = (ui.modal == M_COMPOSE) ? MAIL_TEXT_MAX : 20;
+    int max = (ui.modal == M_COMPOSE) ? MAIL_TEXT_MAX : ui.textWhat == TXT_WIFIPASS ? 63 : 20;
     if (k >= 32 && k <= 126 && (int)b.length() < max) { b += k; ui.dirty = true; sfx(SFX_NAV); }
     return;
   }
@@ -1831,6 +1983,13 @@ static void onKey(char k) {
     return;
   }
   if (ui.modal == M_BREACH) return;
+  if (ui.modal == M_WORLD) {
+    if (c == 'w') wifiOpen();
+    else if (c == 'o') worldToggle();
+    else if (c == ' ') worldSync();
+    return;
+  }
+  if (ui.modal == M_WIFI) { if (c == ' ') wifiPick(); return; }
   if (ui.modal == M_DOSSIER && (c == 's' || c == 'x' || c == 'm' || c == 'p')) {
     nodeAction(c, ui.target, ui.targetEcho); return;
   }
@@ -1842,6 +2001,7 @@ static void onKey(char k) {
   }
   for (int i = 0; i < T_COUNT; i++) if (c == TAB_KEY[i]) { gotoTab(i); return; }
   if (c == 'm') { composeOpen(ui.target); return; }
+  if (c == 'g') { worldOpen(); return; }
   if (c == 'b') {
     if (!loraReady) { toast("Radio offline", TT_BAD); return; }
     loraSendBeacon(); toast("Beacon sent", TT_GOOD); sfx(SFX_SEND); return;
@@ -1956,6 +2116,7 @@ void tdeckAppBegin() {
   av.mood = cyMood;
   if (!gameConfigured()) { ui.modal = M_SETUP; ui.setupStep = 0; }
   else if (resetArmed) tdeckEvtArmed();          // armed by two short boots
+  netBegin();
   uint32_t forfeit = breachPendingTake();
   if (forfeit && gameConfigured()) {
     // Switched off in the middle of a breach: it counts as the miss it
@@ -2069,6 +2230,20 @@ void tdeckTick() {
   // ── modal timers ──
   if (ui.modal == M_RECON) reconTick(now);
   if (ui.modal == M_BREACHGAME) breachTick(now);
+  // The world board: collect a Wi-Fi scan, show what a sync brought back,
+  // and start the routine one when it is due — never during a breach run.
+  wifiPoll();
+  if (net.changed) {
+    net.changed = false;
+    if (ui.modal == M_WORLD || ui.tab == T_OPTS) ui.dirty = true;
+    if (net.state == NS_OK && net.rank && worldLastRank && net.rank < worldLastRank)
+      toast("World rank up: #" + String(net.rank), TT_GOOD);
+    if (net.state == NS_OK && net.rank) worldLastRank = net.rank;
+  }
+  if (ui.modal == M_WORLD && (net.state == NS_WIFI || net.state == NS_SYNC) && (now / 150) % 2 == 0) ui.dirty = true;
+  // (Not while the Wi-Fi list is scanning either: one radio, one job.)
+  if (gameConfigured() && !breachLive() && ui.modal != M_WIFI && netDue(now))
+    netRequest(myChipID32, myName, myFaction, myLevel, myXP);
   if (ui.modal == M_CARD) {
     if (ui.cardKind == CARD_ARMED && !resetArmed) dismissCard();
     // Let go = cancelled. Read the pin itself: the ISR's debounce can miss

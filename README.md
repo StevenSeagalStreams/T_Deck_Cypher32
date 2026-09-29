@@ -50,6 +50,7 @@ Wireless Papers exactly as they do each other.
 - [Playing against other Cypher32 devices](#playing-against-other-cypher32-devices)
 - [Hardware](#hardware) — what you need to buy
 - [First-time setup](#first-time-setup) — flash, power, pick a side
+- [The World Board](#the-world-board) — the worldwide online scoreboard
 - [The optional phone portal](#the-optional-phone-portal)
 - [Factions](#factions) · [Skills](#skills) · [Levelling](#levelling)
 - [How hacking works](#how-hacking-works) — recon, intel tiers, the roll
@@ -74,6 +75,7 @@ should never need this table. It is here anyway.
 | <kbd>S</kbd> / <kbd>X</kbd> | Scout / breach the highlighted node (X twice: the first shows how hard, the second starts the breach) |
 | <kbd>P</kbd> | Ping the highlighted node (round-trip time) |
 | <kbd>B</kbd> | Send a beacon now |
+| <kbd>G</kbd> | The World Board: your world rank and the top ten |
 
 **HOME** is your hacker. The framed line is the move it thinks you should make
 next — scout the practice dummy, spend a skill point, read someone deeper, or
@@ -202,13 +204,17 @@ Flash it. Power it. Pick a side. That's all it takes to enter the network.
 **From your browser — no toolchain.** Open
 **[the installer page](https://stevenseagalstreams.github.io/T_Deck_Cypher32/)**,
 plug the T-Deck in over USB-C, switch it on, pick a range profile and press one
-button. (The page is published by CI once GitHub Pages is switched on for this
-repository with its source set to *GitHub Actions*. Until then, download the
-`.bin` from the latest [build artifacts](https://github.com/StevenSeagalStreams/T_Deck_Cypher32/actions).)
+button. The images on that page are built exactly the way the Arduino IDE
+builds the sketch (same core, same board settings), and CI republishes the page
+from the default branch on every change.
 
 If the browser cannot connect, put the T-Deck into download mode by hand:
-switch it off, hold the trackball pressed down, switch it on, let go. Switch it
-off and on again once flashing has finished.
+switch it off, hold the trackball pressed down, switch it on, let go.
+
+**Switch it off and on again once flashing has finished.** A T-Deck left in
+download mode (by hand, or because the browser could not reset it) shows a dark
+screen until it is power-cycled. Still dark after that? Install again and
+answer *yes* when asked to erase the device.
 
 That needs the Web Serial API, which today means **Chrome, Edge or Opera on a
 desktop computer**. Firefox and Safari do not implement it, and neither does
@@ -305,6 +311,50 @@ scout it (the recon game), then breach it. Winning pays enough XP to level up,
 and the dummy goes away — after that, the only targets are real.
 
 ---
+
+## The World Board
+
+<table><tr>
+<td><img src="docs/img/tdeck/tdeck-world.png" alt="The World Board on the T-Deck: your rank, points, breaches and holds, and the top ten players with faction colour, level and points"></td>
+<td><img src="docs/img/tdeck/tdeck-wifi.png" alt="Picking a Wi-Fi network: signal bars, network names, open or locked"></td>
+</tr></table>
+
+A worldwide scoreboard for every T-Deck that goes online. **Online is optional:**
+the game is still played entirely over LoRa, and nothing is sent until you
+switch the board on.
+
+1. Press <kbd>G</kbd> (or Options → *World board*).
+2. Press <kbd>W</kbd>, pick your Wi-Fi network, type its password.
+3. That's it. The T-Deck joins that network for a few seconds every 15 minutes
+   and about a minute after each fight, then drops it again. <kbd>O</kbd>
+   switches it off, <kbd>Enter</kbd> syncs now.
+
+The full board is public at
+**[stevenseagalstreams.github.io/T_Deck_Cypher32/board.html](https://stevenseagalstreams.github.io/T_Deck_Cypher32/board.html)**.
+
+**How points work.** 10 points for a breach, 5 for holding one off. A fight
+only counts when **both** devices report it. The attacker's T-Deck says "I got
+into X" and X's own T-Deck says "I was breached". They are paired by the radio
+sequence number of that hack, which both of them saw. One modified device
+cannot score on its own. At most 3 fights between the same two players count
+per week, so nobody climbs by farming a friend. The game's own locks apply
+too: one breach per pair per 12 hours.
+
+**What is sent:** your chip id, codename, faction, level and XP, and your side
+of each fight (who, the outcome, when). No location, no messages, no Wi-Fi
+details. The public page shows codename, faction, level, points and when a
+device last synced.
+
+**What it cannot stop.** The game is open source and the radio key is
+public, so there is no way to prove a hack really happened over the air. The
+board makes cheating take effort, not impossible:
+- Scoring needs two devices that agree, capped per pair.
+- New devices are limited per internet connection.
+- Every fight is kept, so an admin can ban an account (see
+  [`supabase/`](supabase/)).
+
+Only T-Decks report, because Heltec Wireless Papers have no World Board yet.
+A fight against a Heltec is never confirmed.
 
 ## The optional phone portal
 
@@ -720,7 +770,7 @@ cd test && make shots    # regenerate every image in docs/img
 | `layout` | The page in real Chromium at five phone sizes — nothing off-screen, nothing unreachable |
 | `flasher` | The browser installer page in real Chromium — the profile picker, the browser gate, a blocked CDN |
 | `qr` | The encoder against `python-qrcode`, then the result decoded by OpenCV |
-| `tdeck` | **The T-Deck edition, played on the PC**: the real sketch and app with the real Adafruit GFX, driven by scripted keys and trackball — setup, recon, the breach timing game and its balance, skills, messages, cards, power saving (110 checks) — and every screen saved |
+| `tdeck` | **The T-Deck edition, played on the PC**: the real sketch and app with the real Adafruit GFX, driven by scripted keys and trackball — setup, recon, the breach timing game and its balance, skills, messages, cards, power saving, the World Board against a fake server (140 checks) — and every screen saved |
 
 **The firmware is compiled for the real chip in CI.** `.github/workflows/firmware.yml`
 builds all three range profiles for the T-Deck with PlatformIO on every push,

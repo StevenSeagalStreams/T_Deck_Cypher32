@@ -537,6 +537,149 @@ int main(int argc, char** argv) {
     ck(statLost == lost0 + 1, "and only once");
   }
 
+  // ── the world board (online scoreboard) ──
+  printf("world board\n");
+  {
+    // A stand-in for the database: register keeps the device's own secret
+    // (again with the same one is fine), sync checks it, acknowledges every
+    // report and returns a rank and a top ten.
+    struct FakeBoard { bool up = true; int registers = 0, syncs = 0; String lastBody, secret; } fb;
+    static FakeBoard* F; F = &fb;
+    netJoin  = [](const String& ssid, const String&, String& err) -> bool {
+      if (!F->up) { err = "Can't join " + ssid; return false; } return true; };
+    netLeave = []() {};
+    netPost  = [](const char* fn, const String& body, String& resp) -> int {
+      if (!F->up) { resp = "down"; return -1; }
+      F->lastBody = body;
+      if (!strcmp(fn, "c32_register")) {
+        F->registers++;
+        String s = jStr(body, "p_secret");
+        if (s.length() != 48) { resp = "{\"ok\": false, \"error\": \"update the firmware\"}"; return 200; }
+        if (F->secret.length() && F->secret != s) { resp = "{\"ok\": false, \"error\": \"chip already registered\"}"; return 200; }
+        F->secret = s;
+        resp = "{\"ok\": true}"; return 200;
+      }
+      F->syncs++;
+      if (!F->secret.length() || jStr(body, "p_secret") != F->secret) { resp = "{\"ok\": false, \"error\": \"unknown device or wrong secret\"}"; return 200; }
+      // Acknowledge every eid in the request.
+      String acked; int i = 0;
+      while ((i = body.indexOf("\"eid\":", i)) >= 0) {
+        i += 6; long e = strtol(body.c_str() + i, nullptr, 10);
+        if (acked.length()) acked += ", ";
+        acked += String(e);
+      }
+      resp = "{\"ok\": true, \"acked\": [" + acked + "], \"rank\": 2, \"score\": 15, \"breaches\": 1, "
+             "\"holds\": 1, \"players\": 7, \"top\": [{\"r\": 1, \"n\": \"VoidHex\", \"f\": \"W\", \"l\": 9, \"s\": 40}, "
+             "{\"r\": 2, \"n\": \"" + myName + "\", \"f\": \"B\", \"l\": 3, \"s\": 15}, "
+             "{\"r\": 3, \"n\": \"Quiet\\\"One\", \"f\": \"R\", \"l\": 2, \"s\": 5}]}";
+      return 200;
+    };
+    while (ui.modal == M_CARD || cardQn) { key(0x08); run(50); }
+    ui.modal = M_NONE; ui.tab = T_HOME; run(50);
+    key('g');
+    ck(ui.modal == M_WORLD, "G opens the world board");
+    ck(!netConfigured() && !net.on, "which starts switched off, with no network");
+    shot("world-off");
+    key('w');
+    ck(ui.modal == M_WIFI, "W lists Wi-Fi networks");
+    run(100);
+    ck(wl.n == 3 && wl.ssid[0] == "HomeNet", "strongest first");
+    shot("wifi");
+    // A locked network asks for its password.
+    key('\r');
+    ck(ui.modal == M_TEXT && ui.textWhat == TXT_WIFIPASS, "a locked network asks for its password");
+    keys("shrt");
+    key('\r');
+    ck(ui.modal == M_TEXT, "a too-short Wi-Fi password is refused");
+    keys("password1");
+    key('\r');
+    ck(net.ssid == "HomeNet" && net.pass == "shrtpassword1" && net.on, "the network and password are kept");
+    ck(fb.registers == 1 && fb.syncs == 1, "the first sync registers this device, then syncs");
+    ck(net.secret.length() == 48 && net.secret == fb.secret && net.registered,
+       "with a secret the device made itself, and keeps");
+    ck(net.everOk && net.rank == 2 && net.players == 7 && net.topN == 3, "rank and top ten come back");
+    ck(String(net.top[2].n) == "Quiet\"One", "names are read back intact");
+    ck(ui.modal == M_WORLD, "back on the board");
+    run(200);
+    shot("world");
+    ck(fb.lastBody.indexOf("\"p_codename\":\"" + myName + "\"") >= 0 &&
+       fb.lastBody.indexOf("\"p_level\":" + String(myLevel)) >= 0, "it sends codename and level");
+
+    // A fight is queued, reported about a minute later, and dropped once acknowledged.
+    loraFightHook('W', 0xBEEF0003, 77);
+    ck(net.qn == 1, "a fight is queued for the board");
+    int s0 = fb.syncs;
+    run(30000);
+    ck(fb.syncs == s0, "not straight away");
+    run(35000);
+    ck(fb.syncs == s0 + 1, "but within about a minute");
+    ck(fb.lastBody.indexOf("\"kind\":\"won\",\"other\":\"beef0003\",\"seq\":77") >= 0, "with its side, opponent and sequence number");
+    ck(net.qn == 0, "and dropped once the board has it");
+
+    // A failed sync keeps the fight and says why.
+    fb.up = false;
+    loraFightHook('B', 0xBEEF0004, 3);
+    run(65000);
+    ck(net.state == NS_FAIL && net.qn == 1, "an unreachable network keeps the fight for later");
+    ck(net.err.indexOf("HomeNet") >= 0, "and says which network failed");
+    fb.up = true;
+    run(NET_RETRY_MS + 1000);
+    ck(net.state == NS_OK && net.qn == 0, "and retries on its own");
+
+    // Never during a breach run.
+    net.dueMs = millis() - 1;
+    int s1 = fb.syncs;
+    br = Breach(); br.target = TRAINING_ID; br.phase = BR_RUN; br.t0 = millis();
+    br.pressSeqSeen = prgPressSeq; br.committed = true;     // a run in progress, nothing to judge
+    ui.modal = M_BREACHGAME;
+    ck(breachLive(), "(a breach run is live)");
+    tdeckTick();
+    ck(fb.syncs == s1, "no sync starts while the ball is moving");
+    br.phase = BR_INTRO; ui.modal = M_WORLD; tdeckTick();
+    ck(fb.syncs == s1 + 1, "it waits for the run to end");
+
+    // O switches it off: nothing more is sent.
+    wake();                                       // (the long waits above dimmed it)
+    key('o');
+    ck(!net.on, "O switches the board off");
+    net.dueMs = millis() - 1; int s2 = fb.syncs; run(1000);
+    ck(fb.syncs == s2, "and then nothing is sent");
+    // A wipe of the character keeps the board identity (its own namespace).
+    netLoad();
+    ck(net.secret == fb.secret && net.registered && net.ssid == "HomeNet", "settings survive a reload");
+
+    // End to end: both sides of one hack must report the SAME sequence
+    // number, or the board can never pair them. The attacker's is assigned
+    // by the send, not by fillHdr() — reading it too early gave 0 every time.
+    addNode(0xBEEF0010, 'R', 3, -60, 9);
+    pendingUser.active = false; hackInFlight = false; loraActionState = LA_IDLE;
+    txSeq = 41;
+    loraHackStart(0xBEEF0010, 0, 1);
+    ck(pendingUser.active && hackReqSeq == ((PktHeader*)pendingUser.buf)->seq && hackReqSeq == 41,
+       "the attacker records the sequence number that actually goes on air");
+    hackInFlight = false; pendingUser.active = false; loraActionState = LA_IDLE;
+    // The defender side, through the real radio handler.
+    int q0 = net.qn;
+    PktHackReq req; memset(&req, 0, sizeof req);
+    fillHdr(&req.hdr, PKT_HACK_REQ, myChipID32);
+    req.hdr.from_id = 0xBEEF0011; req.hdr.seq = 201; req.brute = 2; req.stealth = 1;
+    auto deliver = [](const void* pkt, int len) {
+      uint8_t frame[64]; memcpy(frame, pkt, len); int total = len;
+#if LORA_SIGN
+      uint8_t tag[32]; hmacSha256(LORA_KEY, sizeof(LORA_KEY), frame, (size_t)len, tag);
+      memcpy(frame + len, tag, SIG_LEN); total = len + SIG_LEN;
+#endif
+      radio.rxBuf.assign(frame, frame + total); radioState = RS_RX; loraDioFlag = true; loraTick();
+    };
+    deliver(&req, sizeof req);
+    ck(net.qn == q0 + 1 && net.q[net.qn - 1].seq == 201 && net.q[net.qn - 1].other == 0xBEEF0011 &&
+       (net.q[net.qn - 1].kind == 'B' || net.q[net.qn - 1].kind == 'H'),
+       "the defender records the sequence number it received");
+    deliver(&req, sizeof req);
+    ck(net.qn == q0 + 1, "a resent request is not a second fight");
+    while (ui.modal == M_CARD || cardQn) { key(0x08); run(50); }
+  }
+
   printf("%d checks, %d failures\n", checks, bad);
   return bad ? 1 : 0;
 }

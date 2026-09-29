@@ -790,6 +790,15 @@ int loraHackChancePct(int attackerBrute, int attackerRecon,
 // other device ignores the flag, rolls its own dice for its own records, and
 // the attacker applies the game's result regardless (hackTimedOutcome).
 int8_t hackTimedOutcome = -1;
+// The header sequence number of the last HACK_REQ we sent. Both devices know
+// it (retries resend the same frame), which is what lets an online
+// scoreboard pair "I breached X" with X's own "I was breached".
+uint8_t hackReqSeq = 0;
+// Called once per hack this device takes part in, with how it ended from our
+// side: 'W' we breached them, 'L' we were traced, 'B' we were breached, 'H'
+// we held them off. Unset (nothing happens) unless something is listening —
+// the T-Deck's scoreboard sync.
+void (*loraFightHook)(char kind, uint32_t other, uint8_t seq) = nullptr;
 // How long after a timed hack its attacker's own device refuses another try
 // on us (12 h owned / 30 min traced), less a little for clock skew.
 #define TIMED_TRUST_WIN_MS   (12UL * 3600000UL - 120000UL)
@@ -808,6 +817,8 @@ void loraHackStart(uint32_t target_id, int reconScore, int timed = -1) {
   hackVerdictReady = false;
   hackTimedOut     = false;
   loraSendReliable(&pkt, sizeof(pkt), "HACK");
+  // Only now: the sequence number is assigned by the send, not by fillHdr().
+  hackReqSeq = pkt.hdr.seq;
 }
 
 void loraSendHackResult(uint32_t defender_id, bool won, int8_t xp) {
@@ -1281,6 +1292,8 @@ void loraHandlePacket(uint8_t* buf, int len) {
         }
       }
 #endif
+
+      if (loraFightHook) loraFightHook(attackerWins ? 'B' : 'H', hdr->from_id, hdr->seq);
 
       PktHackReply reply;
       fillHdr(&reply.hdr, PKT_HACK_REPLY, hdr->from_id);

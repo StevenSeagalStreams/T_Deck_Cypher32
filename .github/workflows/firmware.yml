@@ -98,7 +98,7 @@ jobs:
             --output-dir build cypher32
           # The profile really is the one asked for (a build property that
           # silently failed to apply would ship LONG under every name).
-          strings build/cypher32.ino.bin | grep -qx "$profile"
+          strings build/cypher32.ino.bin | grep -qx "\[BOOT\] c32-profile=$profile"
       - name: Image for the web installer
         run: python3 "$RUNNER_TEMP/web_image.py" --build build --profile ${{ matrix.profile }} --dest web-image
       - uses: actions/upload-artifact@v4

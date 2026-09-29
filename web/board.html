@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Cypher32 World Board</title>
+<meta name="description" content="The worldwide Cypher32 scoreboard: every confirmed breach, from every T-Deck that reports in.">
+<style>
+  :root { color-scheme: dark; }
+  *{box-sizing:border-box}
+  body{margin:0;background:#05080a;color:#c8f5c8;
+       font:14px/1.5 ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+       padding:24px 16px calc(40px + env(safe-area-inset-bottom));}
+  .wrap{max-width:760px;margin:0 auto}
+  h1{font-size:26px;color:#7dffa8;margin:0 0 4px;letter-spacing:.02em}
+  h2{font-size:12px;letter-spacing:1.4px;color:#6fbf8a;text-transform:uppercase;
+     margin:0 0 10px;font-weight:600}
+  p{margin:0 0 10px}
+  a{color:#5fe08a}
+  .mut{color:#7a927f}
+  .xs{font-size:12px}
+  .card{background:#0b1114;border:1px solid #1d2f26;border-radius:10px;
+        padding:16px;margin-bottom:14px}
+  .lede{color:#9fd8b4;margin-bottom:18px}
+  .tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+  .tabs button{font:inherit;font-size:12px;letter-spacing:.06em;cursor:pointer;
+    background:#070d0f;color:#9fd8b4;border:1px solid #1d2f26;border-radius:7px;padding:6px 11px}
+  .tabs button[aria-pressed=true]{border-color:#3f8f63;background:#0d1a12;color:#8dffb4}
+  .census{display:flex;height:10px;border-radius:5px;overflow:hidden;background:#0d1a12;margin:4px 0 8px}
+  .census span{display:block;height:100%}
+  .legend{display:flex;gap:14px;flex-wrap:wrap}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:0}
+  .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:7px 10px 7px 0;border-bottom:1px solid #16241c;white-space:nowrap}
+  th{color:#6fbf8a;font-weight:600;font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+  td.r,th.r{text-align:right}
+  td.rank{color:#7a927f;width:3.5em}
+  tr.top1 td.rank{color:#ffd76a} tr.top2 td.rank{color:#d8e0e6} tr.top3 td.rank{color:#e0a070}
+  td.name{color:#e6fbe6}
+  td.pts{color:#8dffb4;font-weight:600}
+  .state{padding:18px 0;text-align:center}
+  .err{color:#ffb0b0}
+  ol{margin:6px 0 0 18px;padding:0}
+  li{margin-bottom:5px}
+  code{background:#0d1a12;padding:1px 5px;border-radius:4px;color:#8dffb4}
+  footer{margin-top:22px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>World Board</h1>
+  <p class="lede">Every Cypher32 T-Deck that goes online, ranked by the fights it
+  has won &mdash; and only fights <b>both</b> sides have confirmed.</p>
+
+  <div class="card">
+    <div class="tabs" role="group" aria-label="Faction">
+      <button data-f="" aria-pressed="true">ALL</button>
+      <button data-f="B">BLACK</button>
+      <button data-f="W">WHITE</button>
+      <button data-f="R">RED</button>
+      <button data-f="G">GREEN</button>
+    </div>
+    <div class="census" id="census" aria-hidden="true"></div>
+    <div class="legend xs mut" id="legend"></div>
+    <div class="scroll" style="margin-top:10px">
+      <table>
+        <thead><tr><th>#</th><th>Codename</th><th>Faction</th><th class="r">Level</th>
+          <th class="r">Points</th><th class="r">Breaches</th><th class="r">Holds</th><th class="r">Seen</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <div class="state xs mut" id="state">Loading&hellip;</div>
+    <p class="xs mut" id="updated" style="margin:8px 0 0"></p>
+  </div>
+
+  <div class="card">
+    <h2>How points work</h2>
+    <ol class="xs">
+      <li><b>10 points</b> for a breach, <b>5</b> for holding a breach off.</li>
+      <li>A fight only counts when <b>both</b> devices report it: the attacker
+          says &ldquo;I got in&rdquo;, the target&rsquo;s own device says
+          &ldquo;I was breached&rdquo;. A modified device cannot score alone.</li>
+      <li>At most <b>3 fights between the same two players count each week</b>,
+          so nobody climbs by farming one friend.</li>
+      <li>Level is as the device reports it. Rank is by points.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2>Get on the board</h2>
+    <ol class="xs">
+      <li>On your T-Deck press <code>G</code> (or Options &rarr; World board).</li>
+      <li>Press <code>W</code>, pick your Wi-Fi network and type its password.</li>
+      <li>That&rsquo;s it. It syncs every 15 minutes and soon after every fight.
+          Nothing but your codename, faction, level and fights is sent.</li>
+    </ol>
+    <p class="xs mut" style="margin-top:10px">No T-Deck yet?
+      <a href="./">Install Cypher32 from your browser</a>.</p>
+  </div>
+
+  <footer class="xs mut">
+    <a href="https://github.com/StevenSeagalStreams/T_Deck_Cypher32">Source</a>
+  </footer>
+</div>
+
+<script>
+  // The board's public read: a database function that returns the standings
+  // and nothing else. The key is the project's publishable key, public by
+  // design (the same one every T-Deck carries).
+  var API = "https://rxpodxloxbybkbystqzd.supabase.co/rest/v1/rpc/c32_board";
+  var KEY = "sb_publishable_ADPGpjk7sfQtalWVQE3Ejw_niOaUZAj";
+  var FAC = { B: ["BLACK", "#aa6eff"], W: ["WHITE", "#e6f0ff"],
+              R: ["RED", "#ff4646"],   G: ["GREEN", "#3cff82"] };
+  var rows = [], filter = "";
+
+  function esc(t) {
+    return String(t == null ? "" : t).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function ago(ts) {
+    var s = Math.max(0, (Date.now() - Date.parse(ts)) / 1000);
+    if (s < 90) return "now";
+    if (s < 5400) return Math.round(s / 60) + "m";
+    if (s < 172800) return Math.round(s / 3600) + "h";
+    return Math.round(s / 86400) + "d";
+  }
+
+  function paint() {
+    var body = document.getElementById("rows"), state = document.getElementById("state");
+    var shown = rows.filter(function (r) { return !filter || r.faction === filter; });
+    // Faction census over everyone on the board.
+    var count = { B: 0, W: 0, R: 0, G: 0 }, pts = { B: 0, W: 0, R: 0, G: 0 };
+    rows.forEach(function (r) { if (count[r.faction] != null) { count[r.faction]++; pts[r.faction] += r.score; } });
+    var total = rows.length || 1;
+    document.getElementById("census").innerHTML = Object.keys(FAC).map(function (f) {
+      return '<span style="width:' + (100 * count[f] / total) + '%;background:' + FAC[f][1] + '"></span>';
+    }).join("");
+    document.getElementById("legend").innerHTML = Object.keys(FAC).map(function (f) {
+      return '<span><i class="dot" style="background:' + FAC[f][1] + '"></i>' + FAC[f][0] + ' ' +
+             count[f] + (count[f] === 1 ? ' player, ' : ' players, ') + pts[f] + ' pts</span>';
+    }).join("");
+    body.innerHTML = shown.map(function (r) {
+      var fac = FAC[r.faction] || ["?", "#78c8ff"];
+      return '<tr class="top' + r.rank + '"><td class="rank">' + r.rank + '</td>' +
+        '<td class="name"><i class="dot" style="background:' + fac[1] + '"></i>' + esc(r.codename || "?") + '</td>' +
+        '<td class="mut">' + fac[0] + '</td>' +
+        '<td class="r">' + r.level + '</td>' +
+        '<td class="r pts">' + r.score + '</td>' +
+        '<td class="r">' + r.breaches + '</td>' +
+        '<td class="r">' + r.holds + '</td>' +
+        '<td class="r mut">' + ago(r.last_sync) + '</td></tr>';
+    }).join("");
+    state.hidden = shown.length > 0;
+    if (!shown.length) {
+      state.className = "state xs mut";
+      state.textContent = rows.length ? "Nobody from this faction on the board yet."
+                                      : "Nobody has reported in yet. Be the first: press G on your T-Deck.";
+    }
+  }
+
+  function load() {
+    fetch(API, { method: "POST", cache: "no-store",
+                 headers: { "apikey": KEY, "Content-Type": "application/json" },
+                 body: JSON.stringify({ p_limit: 500 }) })
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(function (data) {
+        rows = Array.isArray(data) ? data : [];
+        paint();
+        document.getElementById("updated").textContent =
+          rows.length + (rows.length === 1 ? " player" : " players") + ". Updated " +
+          new Date().toLocaleTimeString() + ", refreshes every minute.";
+      })
+      .catch(function (e) {
+        if (rows.length) return;                  // keep the last good board up
+        var s = document.getElementById("state");
+        s.hidden = false; s.className = "state xs err";
+        s.textContent = "The board could not be reached (" + e.message + "). It will try again in a minute.";
+      });
+  }
+
+  document.querySelectorAll(".tabs button").forEach(function (b) {
+    b.addEventListener("click", function () {
+      filter = b.getAttribute("data-f");
+      document.querySelectorAll(".tabs button").forEach(function (x) {
+        x.setAttribute("aria-pressed", x === b ? "true" : "false");
+      });
+      paint();
+    });
+  });
+  load();
+  setInterval(load, 60000);
+</script>
+</body>
+</html>
