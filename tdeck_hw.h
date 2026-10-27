@@ -15,6 +15,7 @@
 //      SD card                CS 39    (unused, but must be held high)
 //    I2C                      SDA 18, SCL 8
 //      Keyboard (ESP32-C3)    0x55, one byte per keypress; 0x01,duty = backlight
+//      Touch (GT911)          0x5D or 0x14, interrupt on GPIO16 (tdeck_touch.h)
 //    Trackball                UP 3, DOWN 15, LEFT 1, RIGHT 2, CLICK 0
 //    Speaker (MAX98357A I2S)  BCK 7, WS 5, DOUT 6   (tdeck_sound.h)
 //    Battery sense            GPIO4 through a 1:2 divider
@@ -198,6 +199,8 @@ void IRAM_ATTR tdeckTbDown()  { tdeckTbY = tdeckTbY + 1; }
 void IRAM_ATTR tdeckTbLeft()  { tdeckTbX = tdeckTbX - 1; }
 void IRAM_ATTR tdeckTbRight() { tdeckTbX = tdeckTbX + 1; }
 
+#include "tdeck_touch.h"
+
 void tdeckInputBegin() {
   Wire.begin(TDECK_I2C_SDA, TDECK_I2C_SCL);
   const int pins[] = { TDECK_TB_UP, TDECK_TB_DOWN, TDECK_TB_LEFT, TDECK_TB_RIGHT };
@@ -210,4 +213,6 @@ void tdeckInputBegin() {
   tdeckKbPresent = Wire.available() > 0;
   while (Wire.available()) Wire.read();
   Serial.printf("[TDECK] keyboard %s\n", tdeckKbPresent ? "found" : "not answering");
+  bool touch = tdeckTouchBegin();
+  Serial.printf("[TDECK] touch panel %s\n", touch ? "GT911 found" : "not found");
 }

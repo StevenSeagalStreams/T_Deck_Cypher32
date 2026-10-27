@@ -34,7 +34,20 @@
 // ─────────────────────────────────────────────
 struct TDeckPrefs {
   uint8_t theme = 0, volume = 2, bright = 12, timeout = 2, kblight = 1, portal = 0;
+  uint8_t tbspeed = 3;                 // trackball sensitivity, 1 (slow) .. 5 (fast)
+  uint8_t touch = 1;                   // touch panel on/off
+  // Touch calibration: screen = (a * raw + b) / 1000 per axis, where screen x
+  // comes from raw y when swap is set. The default is LilyGo's mapping for
+  // this panel (its portrait coordinates turned to our landscape screen).
+  uint8_t tcSwap = 1;
+  int32_t tcAx = 1000, tcBx = 0, tcAy = -1000, tcBy = 240000;
 } tdp;
+
+// Trackball sensitivity: how many pulses make one step, and how often a step
+// may repeat while it keeps rolling. Level 3 is how it always behaved.
+static const uint8_t  TB_PULSES[] = { 4, 3, 2, 2, 1 };
+static const uint16_t TB_GAP_MS[] = { 170, 140, 110, 75, 45 };
+static const char*    TB_TXT[] = { "1 slow", "2", "3 normal", "4", "5 fast" };
 static const uint16_t TIMEOUT_S[] = { 30, 60, 120, 300, 0 };
 static const char*    TIMEOUT_TXT[] = { "30 s", "1 min", "2 min", "5 min", "never" };
 static const uint8_t  KB_DUTY[] = { 0, 60, 200 };
@@ -49,7 +62,16 @@ void tdeckLoadPrefs() {
   tdp.timeout = preferences.getUChar("tmo", 2);
   tdp.kblight = preferences.getUChar("kbl", 1);
   tdp.portal  = preferences.getUChar("portal", 0);
+  tdp.tbspeed = preferences.getUChar("tbspd", 3);
+  tdp.touch   = preferences.getUChar("touch", 1);
+  tdp.tcSwap  = preferences.getUChar("tcsw", 1);
+  tdp.tcAx    = preferences.getInt("tcax", 1000);
+  tdp.tcBx    = preferences.getInt("tcbx", 0);
+  tdp.tcAy    = preferences.getInt("tcay", -1000);
+  tdp.tcBy    = preferences.getInt("tcby", 240000);
   preferences.end();
+  if (tdp.tbspeed < 1 || tdp.tbspeed > 5) tdp.tbspeed = 3;
+  if (tdp.touch > 1) tdp.touch = 1;
   if (tdp.theme > 3) tdp.theme = 0;
   if (tdp.volume > 3) tdp.volume = 2;
   if (tdp.bright < 1 || tdp.bright > 16) tdp.bright = 12;
@@ -65,6 +87,13 @@ void tdeckSavePrefs() {
   preferences.putUChar("tmo", tdp.timeout);
   preferences.putUChar("kbl", tdp.kblight);
   preferences.putUChar("portal", tdp.portal);
+  preferences.putUChar("tbspd", tdp.tbspeed);
+  preferences.putUChar("touch", tdp.touch);
+  preferences.putUChar("tcsw", tdp.tcSwap);
+  preferences.putInt("tcax", tdp.tcAx);
+  preferences.putInt("tcbx", tdp.tcBx);
+  preferences.putInt("tcay", tdp.tcAy);
+  preferences.putInt("tcby", tdp.tcBy);
   preferences.end();
 }
 // A breach whose countdown started is resolved by a verdict or not at all:
@@ -231,7 +260,7 @@ static String fmtLeft(unsigned long ms) {
 enum Tab   : uint8_t { T_HOME, T_RADAR, T_INBOX, T_SKILLS, T_LOG, T_OPTS, T_COUNT };
 enum Modal : uint8_t { M_NONE, M_SETUP, M_DOSSIER, M_RECON, M_COMPOSE, M_CONFIRM,
                        M_CARD, M_TEXT, M_DIAG, M_BREACH, M_ABOUT, M_BREACHGAME,
-                       M_WORLD, M_WIFI };
+                       M_WORLD, M_WIFI, M_TOUCHCAL };
 static const char* TAB_NAME[T_COUNT] = { "HOME", "RADAR", "INBOX", "SKILLS", "LOG", "OPTIONS" };
 static const char  TAB_KEY[T_COUNT]  = { 'h', 'r', 'i', 'k', 'l', 'o' };
 
@@ -311,6 +340,22 @@ static void say(const String& s) { ui.bubble = s; ui.bubbleAt = millis(); ui.dir
 static void render(uint32_t now);
 static void drawWorld(uint32_t now);
 static void drawWifi();
+static void drawTouchCal();
+static void touchCalOpen();
+static void touchCalReset();
+
+// ── Touch zones ─────────────────────────────
+// Every screen says, as it draws itself, which rectangles do what when
+// tapped. render() starts the list afresh each frame, so what can be tapped
+// is always exactly what is on the screen.
+enum { HZ_KEY, HZ_TAB, HZ_ROW, HZ_RADAR, HZ_TILE, HZ_FAC, HZ_WIFI, HZ_SELECT, HZ_POKE, HZ_NAVX };
+struct HotZone { int16_t x, y, w, h; uint8_t kind; int16_t arg; };
+#define HOT_MAX 40
+static HotZone hz[HOT_MAX];
+static int hzN = 0;
+static void hot(int x, int y, int w, int h, uint8_t kind, int arg) {
+  if (hzN < HOT_MAX) hz[hzN++] = { (int16_t)x, (int16_t)y, (int16_t)w, (int16_t)h, kind, (int16_t)arg };
+}
 static void pushAll();
 static void wake() {
   ui.lastInput = millis();
@@ -813,6 +858,9 @@ static void drawTabs() {
     int x = i * w;
     if (on) GR.fillRect(x + 1, 17, w - 2, 12, PAL.accent);
     else if (act) GR.drawRect(x + 1, 17, w - 2, 12, PAL.accent);
+    // A finger is bigger than this row: the zone reaches a little either side.
+    if (ui.modal == M_NONE || ui.modal == M_DOSSIER || ui.modal == M_DIAG || ui.modal == M_ABOUT ||
+        ui.modal == M_WORLD) hot(x, 12, w, 22, HZ_TAB, i);
     String s = TAB_NAME[i];
     int tx = x + (w - txtW(s)) / 2;
     txt(tx, 19, s, on ? PAL.bg : act ? PAL.accent : PAL.dim);
@@ -935,6 +983,8 @@ static void drawHome(uint32_t now) {
   String L[3];
   int n = wrap(nextStep(), 25, L, 3);
   GR.drawRoundRect(147, 128, 168, 44, 4, PAL.accent);
+  hot(147, 128, 168, 44, HZ_SELECT, 0);          // the next move: tap to do it
+  hot(0, 34, 146, 140, HZ_POKE, 0);              // the hacker: tap to poke
   txt(152, 133, ">", PAL.accent);
   for (int i = 0; i < n; i++) txt(162, 133 + i * 11, L[i], PAL.accent);
   // XP and skills along the bottom.
@@ -996,6 +1046,7 @@ static void drawRadar(uint32_t now) {
     const Row& row = rows[r];
     int y = TOP + (r - sc) * ROWH;
     bool on = (r == sel);
+    hot(2, y - 1, 316, ROWH, HZ_RADAR, r);
     if (on) GR.fillRoundRect(2, y - 1, 316, ROWH - 1, 4, PAL.panel), GR.drawRoundRect(2, y - 1, 316, ROWH - 1, 4, PAL.accent);
     String nm = rowName(row);
     if (row.echo) {
@@ -1148,6 +1199,7 @@ static void drawDossier(uint32_t now) {
   auto btn = [&](int x, const String& k, const String& label, bool enabled, uint16_t c) {
     uint16_t col = enabled ? c : PAL.line;
     GR.drawRoundRect(x, ay, 72, 22, 4, col);
+    hot(x, ay - 4, 72, 30, HZ_KEY, tolower(k[0]));
     txt(x + 5, ay + 7, k, col); txt(x + 5 + txtW(k) + 4, ay + 7, label, enabled ? PAL.fg : PAL.line);
   };
   btn(10,  "S", (!training && n->pwned) ? "RE-ENTER" : "SCOUT", canRecon, PAL.accent);
@@ -1173,6 +1225,7 @@ static void drawRecon(uint32_t now) {
   const int TS = 44, GAP = 5, GX = 14, GY = 52;
   for (int i = 0; i < 9; i++) {
     int x = GX + (i % 3) * (TS + GAP), y = GY + (i / 3) * (TS + GAP);
+    hot(x - 2, y - 2, TS + 4, TS + 4, HZ_TILE, i);
     bool lit = (rc.flash == i);
     uint16_t base = avMix(PAL.panel, facCol("BWRG"[i % 4]), 60);
     uint16_t c = lit ? (rc.flashBad ? PAL.bad : PAL.accent) : base;
@@ -1215,6 +1268,8 @@ static void drawRecon(uint32_t now) {
 static void drawCompose() {
   panel(2, 32, 316, 192, PAL.accent);
   txt(10, 40, "TO", PAL.dim);
+  hot(2, 34, 158, 22, HZ_NAVX, -1);
+  hot(160, 34, 158, 22, HZ_NAVX, 1);
   if (cm.to) {
     bool direct = findNode(cm.to) != nullptr;
     String nm = direct ? nodeDisplayName(cm.to) : echoDisplayName(cm.to);
@@ -1256,6 +1311,7 @@ static void drawInbox(uint32_t now) {
     const MsgLogEntry* e = msgLogAt(i);
     if (!e) break;
     int y = TOP + (i - sc) * ROWH;
+    hot(2, y - 1, 316, ROWH, HZ_ROW, i);
     if (i == sel) GR.fillRoundRect(2, y - 1, 316, ROWH - 2, 4, PAL.panel), GR.drawRoundRect(2, y - 1, 316, ROWH - 2, 4, PAL.accent);
     String from = nodeDisplayName(e->from);
     txt(8, y + 2, clip(from, 20), PAL.fg);
@@ -1288,6 +1344,7 @@ static void drawSkills() {
   for (int i = 0; i < 3; i++) {
     int y = 56 + i * 54;
     bool on = sel == i;
+    hot(4, y, 312, 52, HZ_ROW, i);
     panel(4, y, 312, 50, on ? PAL.accent : PAL.line);
     String nm = String(SKILL_KEY[i]); nm.toUpperCase();
     txt(12, y + 6, nm, PAL.fg, 2);
@@ -1329,7 +1386,7 @@ static void drawLog() {
 }
 
 // Options: label, value.
-enum { O_THEME, O_SOUND, O_BRIGHT, O_TIMEOUT, O_KBL, O_BEACON, O_WORLD, O_DIAG, O_PORTAL, O_PASSWORD, O_CLEAR, O_ABOUT, O_RESET, O_COUNT };
+enum { O_THEME, O_SOUND, O_BRIGHT, O_TIMEOUT, O_KBL, O_TBSPEED, O_TOUCH, O_TOUCHCAL, O_BEACON, O_WORLD, O_DIAG, O_PORTAL, O_PASSWORD, O_CLEAR, O_ABOUT, O_RESET, O_COUNT };
 static String optValue(int i) {
   switch (i) {
     case O_THEME:   return PAL.name;
@@ -1337,6 +1394,8 @@ static String optValue(int i) {
     case O_BRIGHT:  return String(tdp.bright) + "/16";
     case O_TIMEOUT: return TIMEOUT_TXT[tdp.timeout];
     case O_KBL:     return KB_TXT[tdp.kblight];
+    case O_TBSPEED: return TB_TXT[tdp.tbspeed - 1];
+    case O_TOUCH:   return !tdeckTouchAddr ? String("no panel") : tdp.touch ? String("ON") : String("OFF");
     case O_PORTAL:  return tdp.portal ? "ON" : "OFF";
     case O_PASSWORD:return tdp.portal ? myPassword : String("(portal off)");
     case O_WORLD:   return !net.on ? String("OFF") : (net.everOk && net.rank) ? "#" + String(net.rank) : String("ON");
@@ -1344,6 +1403,7 @@ static String optValue(int i) {
   }
 }
 static const char* OPT_NAME[O_COUNT] = { "Theme", "Sound", "Brightness", "Screen off after", "Keyboard light",
+  "Trackball speed", "Touch screen", "Calibrate touch",
   "Send beacon now", "World board (online)", "Radio diagnostics", "Phone portal (Wi-Fi)", "Portal password",
   "Forget nodes in range", "About this device", "Factory reset" };
 static void drawOptions() {
@@ -1356,6 +1416,7 @@ static void drawOptions() {
   for (int i = sc; i < O_COUNT && i < sc + VIS; i++) {
     int y = TOP + (i - sc) * ROWH;
     bool on = sel == i;
+    hot(2, y - 2, 316, ROWH, HZ_ROW, i);
     if (on) GR.fillRoundRect(2, y - 2, 316, ROWH - 1, 3, PAL.panel), GR.drawRoundRect(2, y - 2, 316, ROWH - 1, 3, PAL.accent);
     txt(10, y + 2, OPT_NAME[i], i == O_RESET ? PAL.bad : PAL.fg);
     txtR(310, y + 2, clip(optValue(i), 20), on ? PAL.accent : PAL.dim);
@@ -1403,7 +1464,12 @@ static void drawConfirm() {
   panel(20, 80, 280, 80, PAL.warn);
   String L[3]; int n = wrap(ui.confirmMsg, 42, L, 3);
   for (int i = 0; i < n; i++) txtC(160, 92 + i * 12, L[i], PAL.fg);
-  txtC(160, 142, "ENTER yes    BKSP no", PAL.warn);
+  GR.drawRoundRect(52, 134, 100, 20, 4, PAL.warn);
+  txtC(102, 140, "YES  (ENTER)", PAL.warn);
+  GR.drawRoundRect(168, 134, 100, 20, 4, PAL.dim);
+  txtC(218, 140, "NO  (BKSP)", PAL.dim);
+  hot(48, 128, 108, 32, HZ_KEY, '\r');
+  hot(164, 128, 108, 32, HZ_KEY, 0x08);
   drawHint("ENTER confirm  BKSP cancel");
 }
 
@@ -1480,6 +1546,7 @@ static void drawSetup(uint32_t now) {
       int y = 54 + i * 42;
       bool on = ui.setupFac == i;
       uint16_t c = facCol(FAC[i][0]);
+      hot(4, y, 312, 40, HZ_FAC, i);
       panel(4, y, 312, 38, on ? c : PAL.line);
       txt(12, y + 5, FAC[i], c, 2);
       String L[3]; int n = wrap(FAC_TXT[i], 36, L, 3);
@@ -1503,6 +1570,7 @@ static void drawSetup(uint32_t now) {
 
 // ── one frame ───────────────────────────────
 static void render(uint32_t now) {
+  hzN = 0;
   GR.fillScreen(PAL.bg);
   drawStatus();
   if (ui.modal == M_SETUP) { drawSetup(now); drawToast(); return; }
@@ -1527,6 +1595,7 @@ static void render(uint32_t now) {
     case M_DIAG:    drawDiag(); break;
     case M_WORLD:   drawWorld(now); break;
     case M_WIFI:    drawWifi(); break;
+    case M_TOUCHCAL: drawTouchCal(); break;
     case M_ABOUT:   drawAbout(); break;
     case M_BREACH:  drawBreach(now); break;
     case M_BREACHGAME: drawBreachGame(now); break;
@@ -1634,6 +1703,15 @@ static void wifiPick() {
 static void drawWorld(uint32_t now) {
   panel(2, 32, 316, 192, PAL.accent);
   txt(10, 38, "WORLD BOARD", PAL.accent, 2);
+  // Buttons for the fingers (W / O / ENTER on the keyboard).
+  auto wbtn = [&](int x, int w, const char* label, char key) {
+    GR.drawRoundRect(x, 35, w, 18, 4, PAL.line);
+    txtC(x + w / 2, 40, label, PAL.dim);
+    hot(x, 31, w, 26, HZ_KEY, key);
+  };
+  wbtn(152, 50, "WI-FI", 'w');
+  wbtn(206, 50, net.on ? "OFF" : "ON", 'o');
+  wbtn(260, 52, "SYNC", '\r');
   uint8_t st = net.state;
   static const char* SPIN = "|/-\\";
   String s; uint16_t sc = PAL.dim;
@@ -1688,6 +1766,7 @@ static void drawWifi() {
   for (int i = sc; i < wl.n && i < sc + VIS; i++) {
     int y = TOP + (i - sc) * 13;
     bool on = i == wl.sel;
+    hot(6, y - 2, 308, 13, HZ_WIFI, i);
     if (on) GR.drawRoundRect(6, y - 2, 308, 13, 3, PAL.accent);
     int bars = wl.rssi[i] > -55 ? 4 : wl.rssi[i] > -67 ? 3 : wl.rssi[i] > -78 ? 2 : 1;
     for (int b = 0; b < 4; b++) GR.fillRect(12 + b * 4, y + 7 - b * 2, 3, 2 + b * 2, b < bars ? PAL.accent : PAL.line);
@@ -1704,6 +1783,11 @@ static void optionChange(int i) {
     case O_BRIGHT:  tdp.bright = tdp.bright >= 16 ? 2 : tdp.bright + 2; tdeckBacklight(tdp.bright); break;
     case O_TIMEOUT: tdp.timeout = (tdp.timeout + 1) % 5; break;
     case O_KBL:     tdp.kblight = (tdp.kblight + 1) % 3; tdeckKbBacklight(KB_DUTY[tdp.kblight]); break;
+    case O_TBSPEED: tdp.tbspeed = tdp.tbspeed >= 5 ? 1 : tdp.tbspeed + 1; break;
+    case O_TOUCH:   if (!tdeckTouchAddr) { toast("No touch panel found on this T-Deck", TT_DIM); return; }
+                    tdp.touch = !tdp.touch; break;
+    case O_TOUCHCAL:if (!tdeckTouchAddr) { toast("No touch panel found on this T-Deck", TT_DIM); return; }
+                    touchCalOpen(); return;
     case O_BEACON:  if (!loraReady) { toast("Radio offline", TT_BAD); return; }
                     loraSendBeacon(); toast("Beacon sent", TT_GOOD); sfx(SFX_SEND); return;
     case O_DIAG:    ui.modal = M_DIAG; ui.dirty = true; return;
@@ -1830,6 +1914,7 @@ static void onSelect() {
     case M_BREACH: return;
     case M_WORLD: worldSync(); return;
     case M_WIFI:  wifiPick(); return;
+    case M_TOUCHCAL: return;                         // touch only: tap the crosses
   }
   switch (ui.tab) {
     case T_HOME: {
@@ -1908,7 +1993,7 @@ static void onNav(int dx, int dy) {
       }
       return;
     case M_COMPOSE: composeStep(dx ? dx : dy); return;
-    case M_BREACH: case M_CONFIRM: case M_TEXT: case M_BREACHGAME: return;
+    case M_BREACH: case M_CONFIRM: case M_TEXT: case M_BREACHGAME: case M_TOUCHCAL: return;
     case M_CARD: if (ui.cardKind == CARD_ARMED || ui.cardKind == CARD_WIPING) return;
                  dismissCard(); return;              // a roll only puts the card away
     case M_WIFI:
@@ -1958,6 +2043,11 @@ static void onKey(char k) {
     return;
   }
   if (ui.modal == M_BREACHGAME) { breachKey(k); return; }   // every key, straight in
+  if (ui.modal == M_TOUCHCAL) {
+    if (k == 0x08 || k == 0x7F) { ui.modal = M_NONE; ui.tab = T_OPTS; ui.dirty = true; sfx(SFX_BACK); }
+    else if (k == 'r' || k == 'R') touchCalReset();
+    return;
+  }
   if (k == '\r' || k == '\n') { onSelect(); return; }
   if (k == 0x08 || k == 0x7F) { onBack(); return; }
   char c = (k >= 'A' && k <= 'Z') ? (char)(k - 'A' + 'a') : k;
@@ -2146,6 +2236,190 @@ static uint32_t liveSignature() {
   return h;
 }
 
+// ─────────────────────────────────────────────
+//  Touch
+// ─────────────────────────────────────────────
+//
+//  The keyboard and trackball still do everything; touch is a third way in,
+//  and the same actions: tap what you see (a tab, a row, a button, a recon
+//  tile), drag up and down to scroll a list, swipe left and right to change
+//  tab, and swipe in from either screen edge to go back — LilyGo's own
+//  gesture for back on this device. In the breach game the whole screen is
+//  the button, timed from the moment the panel reported the finger.
+//
+//  Lists work like the trackball: the first tap on a row highlights it, a
+//  tap on the highlighted row opens it — so a stray brush of a finger never
+//  spends a skill point or launches anything.
+
+struct TouchState {
+  bool     down = false, consumed = false;
+  int16_t  x0 = 0, y0 = 0, x = 0, y = 0;    // screen px: where it started, where it is
+  int16_t  rx0 = 0, ry0 = 0;                // raw: where it started (calibration)
+  uint32_t t0 = 0, lastPoll = 0;
+  int      dragSteps = 0;
+} tch;
+
+#define TOUCH_POLL_MS   12      // the panel reports at ~100 Hz
+#define TOUCH_LAG_MS    10      // panel scan to report: what the interrupt time still misses
+#define TOUCH_TAP_PX    14      // farther than this and it is a drag, not a tap
+#define TOUCH_EDGE_PX   18      // a swipe starting this close to a side edge means back
+#define TOUCH_SWIPE_PX  50
+#define TOUCH_STEP_PX   26      // one list step per this much vertical drag
+
+static void touchMap(int16_t rx, int16_t ry, int16_t& sx, int16_t& sy) {
+  int32_t ux = tdp.tcSwap ? ry : rx, uy = tdp.tcSwap ? rx : ry;
+  int32_t x = (tdp.tcAx * ux + tdp.tcBx) / 1000, y = (tdp.tcAy * uy + tdp.tcBy) / 1000;
+  sx = (int16_t)constrain(x, 0, TDECK_W - 1);
+  sy = (int16_t)constrain(y, 0, TDECK_H - 1);
+}
+
+// ── calibration: tap three crosses ──
+static const int16_t CAL_X[3] = { 40, 280, 40 };
+static const int16_t CAL_Y[3] = { 60, 60, 200 };
+struct TouchCal { int step = 0; int16_t rx[3], ry[3]; } tcal;
+static void touchCalOpen() { tcal.step = 0; ui.modal = M_TOUCHCAL; ui.dirty = true; sfx(SFX_CLICK); }
+static void touchCalCapture(int16_t rx, int16_t ry) {
+  tcal.rx[tcal.step] = rx; tcal.ry[tcal.step] = ry;
+  sfx(SFX_TILE0);
+  if (++tcal.step < 3) { ui.dirty = true; return; }
+  // Cross 1 to 2 moves only along the screen's x; 1 to 3 only along its y.
+  // Whichever raw axis moved most from 1 to 2 is where screen x comes from.
+  int dxx = abs(tcal.rx[1] - tcal.rx[0]), dxy = abs(tcal.ry[1] - tcal.ry[0]);
+  bool swap = dxy > dxx;
+  int32_t u0 = swap ? tcal.ry[0] : tcal.rx[0], u1 = swap ? tcal.ry[1] : tcal.rx[1];
+  int32_t v0 = swap ? tcal.rx[0] : tcal.ry[0], v2 = swap ? tcal.rx[2] : tcal.ry[2];
+  if (abs(u1 - u0) < 40 || abs(v2 - v0) < 40) {        // taps on top of each other
+    toast("Those taps were too close. Try again.", TT_BAD); sfx(SFX_ERR);
+    tcal.step = 0; ui.dirty = true; return;
+  }
+  tdp.tcSwap = swap;
+  tdp.tcAx = (int32_t)(CAL_X[1] - CAL_X[0]) * 1000 / (u1 - u0);
+  tdp.tcBx = (int32_t)CAL_X[0] * 1000 - tdp.tcAx * u0;
+  tdp.tcAy = (int32_t)(CAL_Y[2] - CAL_Y[0]) * 1000 / (v2 - v0);
+  tdp.tcBy = (int32_t)CAL_Y[0] * 1000 - tdp.tcAy * v0;
+  tdeckSavePrefs();
+  ui.modal = M_NONE; ui.tab = T_OPTS; ui.dirty = true;
+  toast("Touch calibrated", TT_GOOD); sfx(SFX_ROUND);
+}
+static void touchCalReset() {
+  TDeckPrefs d;
+  tdp.tcSwap = d.tcSwap; tdp.tcAx = d.tcAx; tdp.tcBx = d.tcBx; tdp.tcAy = d.tcAy; tdp.tcBy = d.tcBy;
+  tdeckSavePrefs();
+  ui.modal = M_NONE; ui.tab = T_OPTS; ui.dirty = true;
+  toast("Touch back to the default mapping", TT_GOOD);
+}
+static void drawTouchCal() {
+  GR.fillRect(0, 16, TDECK_W, 210, PAL.bg);
+  int i = tcal.step < 3 ? tcal.step : 2;
+  txtC(160, 110, "Tap the centre of the cross", PAL.fg);
+  txtC(160, 124, String(i + 1) + " of 3", PAL.accent);
+  int x = CAL_X[i], y = CAL_Y[i];
+  GR.drawFastHLine(x - 12, y, 25, PAL.warn); GR.drawFastVLine(x, y - 12, 25, PAL.warn);
+  GR.drawCircle(x, y, 6, PAL.warn);
+  drawHint("R default mapping  BKSP cancel");
+}
+
+// ── a tap on the screen ──
+static void touchTap(int16_t x, int16_t y) {
+  for (int i = hzN - 1; i >= 0; i--) {
+    const HotZone& z = hz[i];
+    if (x < z.x || y < z.y || x >= z.x + z.w || y >= z.y + z.h) continue;
+    switch (z.kind) {
+      case HZ_KEY:    onKey((char)z.arg); return;
+      case HZ_TAB:    gotoTab(z.arg); return;
+      case HZ_SELECT: onSelect(); return;
+      case HZ_POKE:   pokeAvatar(); return;
+      case HZ_NAVX:   onNav(z.arg, 0); return;
+      case HZ_TILE:
+        if (ui.modal == M_RECON && rc.phase == RC_INPUT) reconTap(z.arg); else onSelect();
+        return;
+      case HZ_FAC:
+        if (ui.setupFac == z.arg) onSelect(); else { ui.setupFac = (uint8_t)z.arg; ui.dirty = true; sfx(SFX_NAV); }
+        return;
+      case HZ_WIFI:
+        if (wl.sel == z.arg) wifiPick(); else { wl.sel = z.arg; ui.dirty = true; sfx(SFX_NAV); }
+        return;
+      case HZ_ROW: {
+        int& s = ui.sel[ui.tab];
+        if (s == z.arg) onSelect(); else { s = z.arg; ui.dirty = true; sfx(SFX_NAV); }
+        return;
+      }
+      case HZ_RADAR: {
+        Row rows[1 + MAX_KNOWN_NODES + ECHO_MAX_NODES];
+        int n = radarRows(rows, 1 + MAX_KNOWN_NODES + ECHO_MAX_NODES);
+        if (z.arg >= n) return;
+        if (radarSel(rows, n) == z.arg) { onSelect(); return; }
+        ui.sel[T_RADAR] = z.arg; ui.selId = rows[z.arg].id; ui.selEcho = rows[z.arg].echo;
+        ui.dirty = true; sfx(SFX_NAV);
+        return;
+      }
+    }
+  }
+  // Nothing drawn there: screens that are themselves one big button.
+  switch (ui.modal) {
+    case M_CARD: onSelect(); return;
+    case M_DIAG: case M_ABOUT: onBack(); return;
+    case M_SETUP: if (ui.setupStep != 1) onSelect(); return;
+    case M_RECON: if (rc.phase != RC_INPUT) onSelect(); return;
+    default: return;
+  }
+}
+
+static void touchRelease() {
+  int dx = tch.x - tch.x0, dy = tch.y - tch.y0;
+  if (tch.dragSteps) return;                              // it was a scroll
+  if (abs(dx) < TOUCH_TAP_PX && abs(dy) < TOUCH_TAP_PX) { touchTap(tch.x0, tch.y0); return; }
+  if (abs(dx) >= TOUCH_SWIPE_PX && abs(dx) > 2 * abs(dy)) {
+    bool fromEdge = (tch.x0 < TOUCH_EDGE_PX && dx > 0) || (tch.x0 >= TDECK_W - TOUCH_EDGE_PX && dx < 0);
+    if (fromEdge) onKey(0x08);                            // back, as BKSP
+    else if (ui.modal == M_NONE) onNav(dx < 0 ? 1 : -1, 0);   // the next / previous tab
+  }
+}
+
+// Every tick: read the panel, turn it into taps and gestures.
+static void touchTick(uint32_t now) {
+  if (!tdeckTouchAddr || !tdp.touch) return;
+  if ((uint32_t)(now - tch.lastPoll) < TOUCH_POLL_MS) return;
+  tch.lastPoll = now;
+  int16_t rx = 0, ry = 0;
+  int s = tdeckTouchPoll(rx, ry);
+  if (s < 0) return;                                      // nothing new
+  if (s == 1) {
+    int16_t sx, sy; touchMap(rx, ry, sx, sy);
+    if (!tch.down) {
+      tch.down = true; tch.dragSteps = 0;
+      tch.x0 = tch.x = sx; tch.y0 = tch.y = sy; tch.rx0 = rx; tch.ry0 = ry;
+      // When the finger landed: the panel's interrupt, if it was this touch.
+      uint32_t irq = tdeckTouchIrqMs;
+      tch.t0 = (uint32_t)(now - irq) < 60 ? irq : now;
+      bool woke = ui.asleep || ui.dimmed;
+      wake();
+      tch.consumed = woke;                                 // a touch that wakes is only a wake
+      if (!woke && ui.modal == M_BREACHGAME) {             // the whole screen is the button
+        tch.consumed = true;
+        if (br.phase == BR_INTRO) breachBegin(now);
+        else if (br.phase == BR_RUN && (int32_t)(tch.t0 - br.t0) >= 0) breachPress(tch.t0, BR_LAG_MS + TOUCH_LAG_MS);
+      }
+      return;
+    }
+    tch.x = sx; tch.y = sy;
+    wake();
+    // Drag to scroll: the list follows the finger, a step at a time.
+    if (!tch.consumed && ui.modal != M_TOUCHCAL && abs(tch.y - tch.y0) > abs(tch.x - tch.x0)) {
+      int steps = (tch.y0 - tch.y) / TOUCH_STEP_PX;
+      while (steps > tch.dragSteps) { onNav(0, 1); tch.dragSteps++; }
+      while (steps < tch.dragSteps) { onNav(0, -1); tch.dragSteps--; }
+    }
+    return;
+  }
+  // The finger lifted.
+  if (tch.down && !tch.consumed) {
+    if (ui.modal == M_TOUCHCAL) touchCalCapture(tch.rx0, tch.ry0);
+    else touchRelease();
+  }
+  tch.down = false;
+}
+
 void prgResync();                                  // cypher32.ino
 void tdeckTick() {
   uint32_t now = millis();
@@ -2167,7 +2441,8 @@ void tdeckTick() {
   // Read and clear together, so a pulse landing in between is not lost.
   noInterrupts();
   int16_t dx = tdeckTbX, dy = tdeckTbY;
-  bool moved = abs(dx) >= 2 || abs(dy) >= 2;
+  const int need = TB_PULSES[tdp.tbspeed - 1];
+  bool moved = abs(dx) >= need || abs(dy) >= need;
   if (moved) { tdeckTbX = 0; tdeckTbY = 0; }
   interrupts();
   // A lone stray count must not linger and add to the next real roll.
@@ -2181,7 +2456,7 @@ void tdeckTick() {
     tbQuietSince = 0;
     bool woke = ui.asleep || ui.dimmed;
     wake(); input = true;
-    if (!woke && (uint32_t)(now - lastStep) >= 110) {
+    if (!woke && (uint32_t)(now - lastStep) >= TB_GAP_MS[tdp.tbspeed - 1]) {
       lastStep = now;
       if (abs(dx) > abs(dy)) onNav(dx > 0 ? 1 : -1, 0);
       else                   onNav(0, dy > 0 ? 1 : -1);
@@ -2199,6 +2474,7 @@ void tdeckTick() {
     if (gamePress) {}                                     // the game already used it
     else if (!woke && !resetArmed && ui.modal != M_BREACHGAME) onSelect();
   }
+  touchTick(now);
   // The keyboard is polled faster while the ball is moving.
   tdeckKbFast = (ui.modal == M_BREACHGAME);
   (void)input;

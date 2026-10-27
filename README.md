@@ -77,6 +77,24 @@ should never need this table. It is here anyway.
 | <kbd>B</kbd> | Send a beacon now |
 | <kbd>G</kbd> | The World Board: your world rank and the top ten |
 
+**The touch screen** does the same things with a finger:
+
+| Touch | What it does |
+|-------|--------------|
+| Tap a tab | Open it |
+| Tap a row | Highlight it; tap it again to open it (so a brush of a finger never spends a point or launches anything) |
+| Tap a button or a recon tile | Press it |
+| Drag up / down | Scroll the list |
+| Swipe left / right | Change tab |
+| Swipe in from the left or right edge | Back (LilyGo's own gesture on this device) |
+| Tap anywhere in the breach game | Stop the ball, timed from the moment the panel saw your finger |
+
+**Options** also has **Trackball speed** (1 slow to 5 fast, like the
+pointer sensitivity in LilyGo's own firmware), **Touch screen** on/off, and
+**Calibrate touch**: tap three crosses and the panel learns how it is turned
+and scaled (R on that screen puts the default back). Try it once if taps land
+in the wrong place.
+
 **HOME** is your hacker. The framed line is the move it thinks you should make
 next — scout the practice dummy, spend a skill point, read someone deeper, or
 breach someone you have read — and <kbd>Enter</kbd> does it. <kbd>Space</kbd>
@@ -770,7 +788,7 @@ cd test && make shots    # regenerate every image in docs/img
 | `layout` | The page in real Chromium at five phone sizes — nothing off-screen, nothing unreachable |
 | `flasher` | The browser installer page in real Chromium — the profile picker, the browser gate, a blocked CDN |
 | `qr` | The encoder against `python-qrcode`, then the result decoded by OpenCV |
-| `tdeck` | **The T-Deck edition, played on the PC**: the real sketch and app with the real Adafruit GFX, driven by scripted keys and trackball — setup, recon, the breach timing game and its balance, skills, messages, cards, power saving, the World Board against a fake server (140 checks) — and every screen saved |
+| `tdeck` | **The T-Deck edition, played on the PC**: the real sketch and app with the real Adafruit GFX, driven by scripted keys and trackball — setup, recon, the breach timing game and its balance, skills, messages, cards, power saving, the World Board against a fake server, trackball speed and the touch screen against a fake GT911 panel (170 checks) — and every screen saved |
 
 **The firmware is compiled for the real chip in CI.** `.github/workflows/firmware.yml`
 builds all three range profiles for the T-Deck with PlatformIO on every push,

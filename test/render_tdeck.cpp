@@ -24,6 +24,7 @@ int g_pinLevel[64];
 static const bool g_pinInit = []{ for (int i = 0; i < 64; i++) g_pinLevel[i] = 1; return true; }();
 #include <Wire.h>
 std::deque<uint8_t> g_keyQueue;
+FakeTouch g_touch;
 TwoWire Wire;
 #include <WiFi.h>
 #include <ESPmDNS.h>
@@ -64,6 +65,11 @@ static void key(char k)        { g_keyQueue.push_back((uint8_t)k); run(60); }
 static void keys(const char* s){ while (*s) key(*s++); }
 static void roll(int dx, int dy){ tdeckTbX += dx * 2; tdeckTbY += dy * 2; run(150); }
 static void press()            { prgShortSeq++; run(60); }
+// A finger on the touch panel, in screen pixels, reported as the panel would
+// under the default mapping (screen x = raw y, screen y = 240 - raw x).
+static void fingerAt(int sx, int sy) { g_touch.fingers = 1; g_touch.x = 240 - sy; g_touch.y = sx; g_touch.ready = true; run(40); }
+static void fingerUp()               { g_touch.fingers = 0; g_touch.ready = true; run(40); }
+static void tap(int sx, int sy)      { fingerAt(sx, sy); fingerUp(); }
 // The trackball going down (what the sketch's PRG ISR records), without the
 // release: the breach game reads this edge.
 static void ballDown()         { prgPressMs = g_millis; prgPressSeq = prgPressSeq + 1; g_millis++; tdeckTick(); }
@@ -100,6 +106,7 @@ int main(int argc, char** argv) {
   randomSeed(12345);
 
   // ── boot, unconfigured ──
+  g_touch.present = true;                      // this T-Deck has the GT911 panel
   displayPtr = new TDeckPanel();
   tdeckLoadPrefs();
   tdeckPowerOn();
@@ -678,6 +685,128 @@ int main(int argc, char** argv) {
     deliver(&req, sizeof req);
     ck(net.qn == q0 + 1, "a resent request is not a second fight");
     while (ui.modal == M_CARD || cardQn) { key(0x08); run(50); }
+  }
+
+  // ── trackball speed ──
+  printf("trackball speed\n");
+  {
+    while (ui.modal == M_CARD || cardQn) { key(0x08); run(50); }
+    ui.modal = M_NONE; wake(); key('o');
+    ck(ui.tab == T_OPTS, "options");
+    ui.sel[T_OPTS] = 0; ui.dirty = true; run(50);
+    tdp.tbspeed = 1;
+    roll(0, 1); run(400);
+    ck(ui.sel[T_OPTS] == 0, "on the slowest setting a small roll does not move");
+    tdp.tbspeed = 5;
+    roll(0, 1);
+    ck(ui.sel[T_OPTS] == 1, "on the fastest it does");
+    tdp.tbspeed = 3;
+    ui.sel[T_OPTS] = O_TBSPEED; ui.dirty = true; run(50);
+    shot("options-input");
+    key('\r');
+    ck(tdp.tbspeed == 4 && Preferences::ints["tbspd"] == 4, "ENTER on Trackball speed steps it up, and it is saved");
+    key('\r'); key('\r');
+    ck(tdp.tbspeed == 1, "and wraps round from fast to slow");
+    tdp.tbspeed = 3; tdeckSavePrefs();
+  }
+
+  // ── touch ──
+  printf("touch\n");
+  {
+    ck(tdeckTouchAddr == 0x5D, "the GT911 touch panel is found at boot");
+    ui.modal = M_NONE; wake(); key('h'); run(50);
+    tap(80, 22);                                   // RADAR, second of six tabs
+    ck(ui.tab == T_RADAR, "tapping a tab opens it");
+    Row rows[1 + MAX_KNOWN_NODES + ECHO_MAX_NODES];
+    int n = radarRows(rows, 1 + MAX_KNOWN_NODES + ECHO_MAX_NODES);
+    ck(n >= 2, "(the radar has rows)");
+    tap(160, 52 + 25 + 10);                        // the second row
+    ck(ui.selId == rows[1].id && ui.modal == M_NONE, "the first tap on a row only highlights it");
+    tap(160, 52 + 25 + 10);
+    ck(ui.modal == M_DOSSIER && ui.target == rows[1].id, "a tap on the highlighted row opens it");
+    shot("dossier-touch");
+    // Swipe in from the left edge: back.
+    fingerAt(4, 120); fingerAt(60, 122); fingerAt(110, 121); fingerUp();
+    ck(ui.modal == M_NONE && ui.tab == T_RADAR, "swiping in from the screen edge goes back");
+    // Swipe left in the middle: the next tab.
+    fingerAt(220, 120); fingerAt(160, 118); fingerAt(110, 119); fingerUp();
+    ck(ui.tab == T_INBOX, "swiping left changes to the next tab");
+    fingerAt(110, 120); fingerAt(170, 118); fingerAt(220, 119); fingerUp();
+    ck(ui.tab == T_RADAR, "and right, back again");
+    // Drag up through a list: it scrolls, a step per finger-width, and is not a tap.
+    key('o'); ui.sel[T_OPTS] = 0; ui.dirty = true; run(50);
+    fingerAt(160, 180); fingerAt(160, 150); fingerAt(160, 125); fingerUp();
+    ck(ui.sel[T_OPTS] == 2, "dragging up scrolls the list down");
+    ck(ui.modal == M_NONE && tdp.theme == 0, "and taps nothing");
+    // A dossier button.
+    ui.modal = M_NONE; key('r');
+    ui.selId = rows[1].id; ui.selEcho = false; key('\r');
+    ck(ui.modal == M_DOSSIER, "dossier");
+    tap(10 + 36, 168 + 11);                        // the S / SCOUT button
+    ck(ui.modal == M_RECON, "tapping SCOUT starts recon");
+    key(0x08); run(100);
+    while (ui.modal == M_CARD || cardQn) { key(0x08); run(50); }
+    // A touch that wakes the screen does only that.
+    ui.modal = M_NONE; key('h'); run(50);
+    run(31000);
+    ck(ui.dimmed, "(dimmed)");
+    tap(80, 22);
+    ck(!ui.dimmed && ui.tab == T_HOME, "a touch on a dim screen only wakes it");
+
+    // The breach game: the whole screen is the button, timed at the touch.
+    addNode(0xBEEF0020, 'R', 3, -60, 9);
+    findNode(0xBEEF0020)->tdeck = false;
+    ui.modal = M_NONE; key('r');
+    ui.selId = 0xBEEF0020; ui.selEcho = false; key('\r');
+    key('x'); key('x');
+    ck(ui.modal == M_BREACHGAME && br.phase == BR_INTRO, "breach game open");
+    tap(160, 200);
+    ck(br.phase == BR_COUNT, "a tap starts the countdown");
+    run(950);
+    ck(br.phase == BR_RUN, "running");
+    // Wait, a millisecond at a time, until the ball (as judged) is in the gap.
+    bool ready = false;
+    for (int i = 0; i < 6000 && br.phase == BR_RUN; i++) {
+      int32_t tj = (int32_t)(g_millis - br.t0) - BR_LAG_MS - TOUCH_LAG_MS;
+      int pos = breachBallPos(tj < 0 ? 0 : tj), zx = br.zoneC - br.zoneW / 2;
+      if (tj > 0 && pos >= zx + 3 && pos < zx + br.zoneW - 3) { ready = true; break; }
+      g_millis++; tdeckTick();
+    }
+    ck(ready, "(the ball reaches the gap)");
+    g_touch.fingers = 1; g_touch.x = 240 - 120; g_touch.y = 160; g_touch.ready = true;
+    tch.lastPoll = g_millis - 50;                  // the panel is read this very tick
+    tdeckTick();
+    ck(br.phase == BR_RESULT && br.hit, "a touch in time is a hit");
+    fingerUp();
+    run(1500);
+    while (ui.modal == M_CARD || cardQn) { key(0x08); run(50); }
+
+    // Calibration: a panel that reports differently (not turned, twice the
+    // scale) is learned from three taps.
+    ui.modal = M_NONE; key('o');
+    ui.sel[T_OPTS] = O_TOUCHCAL; ui.dirty = true; run(50);
+    key('\r');
+    ck(ui.modal == M_TOUCHCAL && tcal.step == 0, "Calibrate touch shows the first cross");
+    shot("touch-calibrate");
+    auto rawTap = [](int rx, int ry) {
+      g_touch.fingers = 1; g_touch.x = rx; g_touch.y = ry; g_touch.ready = true; run(40);
+      g_touch.fingers = 0; g_touch.ready = true; run(40);
+    };
+    for (int i = 0; i < 3; i++) rawTap(CAL_X[i] * 2, CAL_Y[i] * 2);
+    ck(ui.modal == M_NONE && tdp.tcSwap == 0, "three taps calibrate it (here: not turned)");
+    int16_t sx, sy; touchMap(200, 300, sx, sy);
+    ck(abs(sx - 100) <= 1 && abs(sy - 150) <= 1, "and the panel now maps to the right pixels");
+    key('h'); run(50);
+    rawTap(80 * 2, 22 * 2);
+    ck(ui.tab == T_RADAR, "taps land where they should after calibrating");
+    key('o'); ui.sel[T_OPTS] = O_TOUCHCAL; ui.dirty = true; run(50); key('\r');
+    key('r');
+    ck(tdp.tcSwap == 1 && tdp.tcAy == -1000 && ui.modal == M_NONE, "R puts the default mapping back");
+    // Touch off: nothing reacts.
+    tdp.touch = 0; key('h'); run(50);
+    tap(80, 22);
+    ck(ui.tab == T_HOME, "with touch switched off, taps do nothing");
+    tdp.touch = 1; tdeckSavePrefs();
   }
 
   printf("%d checks, %d failures\n", checks, bad);
