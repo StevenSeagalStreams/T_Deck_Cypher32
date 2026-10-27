@@ -301,7 +301,10 @@ static String netWhy(int code, const String& resp) {
   if (!e.length()) e = jStr(resp, "message");
   if (e == "chip already registered") return "Board: this chip id is taken. Ask the board admin.";
   if (e.length()) return "Board: " + e;
-  return code < 0 ? "No internet through this network" : "Board unreachable (HTTP " + String(code) + ")";
+  // A transport failure (no DNS, refused, TLS failed, timed out): say which,
+  // in the HTTP library's own words, rather than guessing at the network.
+  if (code < 0) return "Can't reach the board: " + (resp.length() ? resp : String(code));
+  return "Board unreachable (HTTP " + String(code) + ")";
 }
 static const char* netKindName(char k) {
   return k == 'W' ? "won" : k == 'L' ? "lost" : k == 'B' ? "breached" : "held";
